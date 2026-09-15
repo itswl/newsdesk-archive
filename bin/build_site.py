@@ -482,6 +482,49 @@ for d in reversed(days):
     # 月份已在分组表头里，行内只显示月-日，省下的宽度让报告 chip 收进一行
     rows.append('<tr><td class="d"><a href="%s.html">%s</a>%s</td><td>%s</td></tr>'
                 % (d, d[5:], '<b class="new">最新</b>' if d == days[-1] else '', chips))
+# ── 给外部监控用的机器可读状态 ────────────────────────────────────────
+# 本机的调度器报不了自己的死：机器关了、进程被杀，它没机会发任何告警。
+# 把状态写成一个随站点一起发布的小文件，外部监控轮询它、看 generated 是否
+# 变陈旧，才能覆盖「整机不在」这种本地告警永远发现不了的情况。
+# 用 uptime-kuma 的话：HTTP(s) - Json Query，Query `$.stale_hours`，
+# 期望值小于 6；或直接监控 `$.ok` 是否为 true。
+def write_status():
+    try:
+        health = json.load(open(os.path.join(ROOT, 'state', 'health.json')))
+    except (OSError, ValueError):
+        health = {}
+    try:
+        sched = json.load(open(os.path.join(ROOT, 'state', 'scheduler.json')))
+    except (OSError, ValueError):
+        sched = {}
+    today = datetime.date.today().isoformat()
+    tasks = {}
+    for key in ('ai', 'douban', 'trending', 'momoyu'):
+        r = sched.get(key) or {}
+        tasks[key] = {'status': r.get('status') if r.get('date') == today else 'pending',
+                      'finished': r.get('finished') if r.get('date') == today else None}
+    hb = health.get('heartbeat')
+    stale = None
+    if hb:
+        try:
+            stale = round((datetime.datetime.now()
+                           - datetime.datetime.fromisoformat(hb)).total_seconds() / 3600, 2)
+        except ValueError:
+            pass
+    doc = {'generated': datetime.datetime.now().isoformat(timespec='seconds'),
+           'date': today,
+           'heartbeat': hb,                 # 调度器最近一次转动的时刻
+           'stale_hours': stale,            # 距今多久。变大 = 调度器或整机不在了
+           'tasks': tasks,
+           'ok': bool(hb) and stale is not None and stale < 1
+                 and all(t['status'] in ('ok', 'pending') for t in tasks.values())}
+    # 注意：这个文件会随 site/ 发布到公开桶，不要往里放路径、pid 之类的本机信息
+    with open(os.path.join(SITE, 'status.json'), 'w', encoding='utf-8') as f:
+        json.dump(doc, f, ensure_ascii=False, indent=1)
+    print('  site/status.json  (stale %s h, ok=%s)' % (stale, doc['ok']))
+
+write_status()
+
 open(os.path.join(SITE, 'archive.html'), 'w', encoding='utf-8').write(
     '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
     '<meta name="viewport" content="width=device-width,initial-scale=1">'
