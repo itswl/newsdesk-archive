@@ -127,7 +127,20 @@ async function selfCheck(env) {
     verdict = { bad: true, title: '❌ newsdesk 自查请求失败',
                 body: String(e && e.message || e) };
   }
+  // 成功也记一行：开了 observability 之后，这是唯一能在后台确认「cron 确实在跑」
+  // 的凭据。只在出事时才有日志的话，「一直没日志」和「一切正常」长得一模一样。
+  console.log(JSON.stringify({
+    check: 'newsdesk', stale: verdict.bad, threshold,
+    age_hours: verdict.age !== undefined ? Number(verdict.age.toFixed(2)) : null,
+  }));
   if (verdict.bad) await notify(env, verdict.title, verdict.body);
+}
+
+// 日志会被 Cloudflare 收走存 3 天。ALERT_WEBHOOK 是能往群里发消息的凭据，
+// 异常信息里一旦带上它就等于把凭据写进了日志库，所以统一抹掉再打印。
+function redact(text, env) {
+  const hook = env.ALERT_WEBHOOK;
+  return hook ? String(text).split(hook).join('<ALERT_WEBHOOK>') : String(text);
 }
 
 async function notify(env, title, text) {
@@ -146,13 +159,13 @@ async function notify(env, title, text) {
     // 光看状态码不够：飞书/Lark、钉钉、企业微信都是错误也返回 200，失败写在
     // body 的 code/errcode 里。只看状态码的话通道断了也一直以为发出去了。
     const txt = await r.text();
-    if (!r.ok) return console.log('告警 HTTP 失败', r.status, txt.slice(0, 200));
+    if (!r.ok) return console.log('告警 HTTP 失败', r.status, redact(txt.slice(0, 200), env));
     try {
       const d = JSON.parse(txt);
       const code = d.code ?? d.errcode ?? d.StatusCode;
-      if (code !== undefined && Number(code) !== 0) console.log('告警被服务端拒绝', txt.slice(0, 200));
+      if (code !== undefined && Number(code) !== 0) console.log('告警被服务端拒绝', redact(txt.slice(0, 200), env));
     } catch { /* 非 JSON（Slack 返回纯文本 ok）按成功处理 */ }
   } catch (e) {
-    console.log('告警发送异常', String(e));   // 自查失败不能反过来影响站点
+    console.log('告警发送异常', redact(e && e.message || e, env));   // 自查失败不能反过来影响站点
   }
 }

@@ -19,6 +19,18 @@ ALERT_PAYLOAD = "{\"msg_type\":\"text\",\"content\":{\"text\":\"{{TEXT}}\"}}"
 pattern   = "news.example.com/*"
 zone_name = "example.com"
 
+# ── 日志（Workers Logs / Observability）───────────────────────────────
+# 默认是关的，console.log 只有在 `wrangler tail` 实时挂着时才看得到。而这个
+# Worker 唯一会打日志的地方，恰好是「告警通道自己坏了」——webhook 被轮换、
+# 群被删，notify() 记一句然后没人看见，专为发现静默失效而设的那一层自己静默
+# 失效了。cron 每 6 小时一次，不可能正好挂着 tail 接住。
+#
+# 免费额度 200,000 事件/天。这个 Worker 一天约 150 次请求 + 4 次 cron，
+# 用掉不到 0.1%，采样率给满即可。留存 3 天（付费 7 天）。
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 # ── 定时自查 ───────────────────────────────────────────────────────────
 # 每 6 小时一次（UTC）。这是整套告警里唯一不在那台 Mac 上的环节——
 # bin/alert.py 和日终核对都要调度器活着才发得出来，机器关了它们一起沉默。
