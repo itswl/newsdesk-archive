@@ -4,10 +4,17 @@
 
 ## 改动前必须知道的
 
-**不依赖 `gh` CLI。** GitHub API 直接走 HTTPS（`bin/common.py` 的 `gh()`），令牌
-从 `bin/config.conf` 的 `GITHUB_TOKEN` 取，留空时才尝试借用本机 `gh` 的令牌。
-不要退回 `subprocess.run(['gh', ...])`——单次 trending 采集约 190 次调用，
-那样就是 190 次进程创建。
+**令牌是可选的，别让它变回必需。** Trending 采集按约 50 次 API 调用设计，为的是
+装进未认证的 60 次/小时预算。三条约束支撑这个数：
+
+- 每个仓库只花 **1 次** `repos/{r}`——它一次就带回 stars / forks / license.spdx_id /
+  created_at / pushed_at / issues / subscribers / topics，别再拆成多次
+- 停更判断走 `github.com/<repo>/commits.atom`（`gh_head_commit()`），**不吃 API 配额**
+- 追踪集合 = 今日榜 + **上一期榜**，不是上一期快照的全部仓库——后者会逐日累积
+  （实测 9 天涨到 49 个）
+
+新增按仓库的 API 调用前先算预算。`gh_remaining()` 查配额本身不扣配额。
+也不要退回 `subprocess.run(['gh', ...])`——那是每次调用 fork 一个进程。
 
 **所有联网都在采集层。** 分析层（模型）跑在沙箱里，读不到任何明文凭据，也出不了网。新增数据源时先确认能用 `curl` 拿到，不要依赖模型的联网工具 —— codex 走的自定义供应商根本没有 web search，实测加了 `tools.web_search=true` 之后事件流里该事件为 0，模型会转而用 shell 去本地翻文件硬凑答案。
 

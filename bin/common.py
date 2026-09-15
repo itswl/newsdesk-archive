@@ -1,4 +1,5 @@
 import os, re, json, glob, datetime, subprocess, urllib.request, urllib.error
+import xml.etree.ElementTree as ET
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UA = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
@@ -53,6 +54,9 @@ def gh_token():
     if _TOKEN is not None:
         return _TOKEN
     t = conf('GITHUB_TOKEN')
+    if t.lower() in ('none', 'no', 'off'):      # 显式声明不用令牌
+        _TOKEN = ''
+        return _TOKEN
     if not t:
         r = subprocess.run(['gh', 'auth', 'token'], capture_output=True, text=True)
         if r.returncode == 0:
@@ -83,6 +87,37 @@ def gh(path, with_headers=False):
             return (data, dict(r.headers)) if with_headers else data
     except (urllib.error.URLError, ValueError, TimeoutError):
         return (None, None) if with_headers else None
+
+
+def gh_remaining():
+    """还剩多少次未认证配额。/rate_limit 端点本身不扣配额，可以随时查。
+    有令牌时是 5000，没令牌 60——后者要求采集必须按预算花。"""
+    d = gh('rate_limit')
+    try:
+        return d['rate']['remaining']
+    except (TypeError, KeyError):
+        return 0
+
+
+def gh_head_commit(repo):
+    """取默认分支最新提交时间。走 github.com 的 commits.atom 而不是 API——
+    这条路不吃 API 限额，所以「停更核查」在没有令牌时也能完整保留。
+    停更必须读 HEAD 而不是 pushed_at：后者会被 fork 推送、tag、CI 刷新。"""
+    body = curl('https://github.com/%s/commits.atom' % repo, timeout=25)
+    if not body:
+        return None, None
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return None, None
+    ns = {'a': 'http://www.w3.org/2005/Atom'}
+    e = root.find('a:entry', ns)
+    if e is None:
+        return None, None
+    d = e.find('a:updated', ns)
+    t = e.find('a:title', ns)
+    return (d.text if d is not None else None,
+            re.sub(r'\s+', ' ', (t.text or '')).strip()[:120] if t is not None else None)
 
 
 def gh_last_page(path):

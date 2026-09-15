@@ -71,7 +71,7 @@ HTTPS，但要在配置里填 `GITHUB_TOKEN`（只读公开仓库即可）：Tre
 | 项 | 说明 |
 |---|---|
 | `ENGINE` / `CLAUDE_MODEL` / `CODEX_MODEL` | 默认引擎与各自的模型 |
-| `GITHUB_TOKEN` | 留空时若装了 `gh` 会借用它的令牌 |
+| `GITHUB_TOKEN` | **可选**。留空走未认证预算；填 `none` 显式不认证；留空且装了 `gh` 会借用它的令牌 |
 | `BACKUP_BUCKET` / `PUBLISH_BUCKET` | 对象存储桶名，**留空即关闭备份与发布** |
 | `SITE_URL` | 对外地址，用于生成 Atom feed（feed 里必须是绝对链接），**留空即不生成** |
 | `CONTACT` | 页脚侵权联系邮箱，留空则不显示具体地址 |
