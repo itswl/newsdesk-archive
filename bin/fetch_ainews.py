@@ -21,9 +21,43 @@ FEEDS = [
     ('Ars Technica',    'https://feeds.arstechnica.com/arstechnica/technology-lab',     'rss',  '二手·科技媒体'),
     ('Simon Willison',  'https://simonwillison.net/atom/everything/',                   'rss',  '二手·独立评论'),
     ('Hacker News',     'https://news.ycombinator.com/rss',                             'rss',  '社区·首页'),
+    ('Hugging Face',    'https://huggingface.co/blog/feed.xml',                        'rss',  '一手·厂商公告'),
+    ('Qwen',            'https://qwenlm.github.io/blog/index.xml',                      'rss',  '一手·厂商公告'),
+    ('MIT Tech Review', 'https://www.technologyreview.com/topic/artificial-intelligence/feed', 'rss', '二手·科技媒体'),
+    ('Import AI',       'https://importai.substack.com/feed',                           'rss',  '二手·独立评论'),
+    ('r/LocalLLaMA',    'https://www.reddit.com/r/LocalLLaMA/.rss',                     'rss',  '社区·开源模型'),
     ('arXiv cs.AI',     'https://export.arxiv.org/api/query?search_query=cat:cs.AI'
-                        '&sortBy=submittedDate&sortOrder=descending&max_results=25',    'rss',  '一手·论文预印本'),
+                        '&sortBy=submittedDate&sortOrder=descending&max_results=12',    'rss',  '一手·论文预印本'),
 ]
+
+def fetch_anthropic():
+    """Anthropic 官网没有 RSS（/rss.xml、/feed.xml 都 404），只能解析 /news 页面。
+    结构是 <a href="/news/slug"> 里包 <time> 日期、<h4> 标题、<p> 摘要；class 名带
+    构建哈希会随改版变，所以按结构匹配而不认 class。
+    解析出 0 条时当作失败上报，不要静默返回空——否则改版后这个源会无声消失。"""
+    body = curl('https://www.anthropic.com/news', timeout=30)
+    if not body:
+        return None
+    out = []
+    for blk in re.findall(r'<a\s+href="(/news/[a-z0-9\-]+)"[^>]*>(.*?)</a>', body, re.S):
+        href, inner = blk
+        t = re.search(r'<time[^>]*>([^<]+)</time>', inner)
+        # 页面有两套布局：FeaturedGrid 用 <h4>，PublicationList 用 <span>。
+        # 共同点是 class 里带 title，按 class 匹配比按标签稳。
+        h = (re.search(r'<[a-z0-9]+[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</[a-z0-9]+>', inner, re.S)
+             or re.search(r'<h[1-6][^>]*>(.*?)</h[1-6]>', inner, re.S))
+        p = re.search(r'<p[^>]*>(.*?)</p>', inner, re.S)
+        if not h:
+            continue
+        out.append({'title': txt(h.group(1)),
+                    'link': 'https://www.anthropic.com' + href,
+                    'date': t.group(1).strip() if t else '',
+                    'summary': txt(p.group(1))[:400] if p else ''})
+    seen, uniq = set(), []
+    for x in out:                       # 同一条目在页面上可能出现多次
+        if x['link'] not in seen:
+            seen.add(x['link']); uniq.append(x)
+    return uniq or None
 
 AI_KW = re.compile(r'\b(ai|llm|gpt|claude|gemini|openai|anthropic|deepmind|deepseek|qwen|llama|'
                    r'mistral|nvidia|gpu|tpu|agent|agentic|transformer|diffusion|model|inference|'
@@ -63,7 +97,8 @@ def norm_date(s):
     """各家日期格式不统一，统一成 ISO；解析不了就返回原串。"""
     s = (s or '').strip()
     for f in ('%a, %d %b %Y %H:%M:%S %z', '%a, %d %b %Y %H:%M:%S %Z',
-              '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S.%f%z'):
+              '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S.%f%z',
+              '%b %d, %Y'):        # Anthropic 页面是 "Sep 1, 2026" 这种
         try:
             d = datetime.datetime.strptime(s.replace('GMT', '+0000'), f)
             if d.tzinfo is None:
@@ -72,6 +107,11 @@ def norm_date(s):
         except ValueError:
             continue
     return s
+
+# 每源上限。论文和社区帖天天都有，不限的话会把厂商公告、深度报道淹掉——
+# 实测不设限时社区源占到七成，而一手公告只有 2 条，日报不该是这个配比。
+# HN 首页与 HN Algolia 高度重叠，前者压得更低。
+CAP = {'arXiv cs.AI': 12, 'r/LocalLLaMA': 10, 'Hacker News': 12}
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--hours', type=int, default=36, help='只保留这个时间窗内的条目')
@@ -82,13 +122,45 @@ DD = data_dir('ainews', create=True)
 cutoff = datetime.datetime.now().astimezone() - datetime.timedelta(hours=a.hours)
 items, stats = [], []
 
+def norm_date_or_raw(v):
+    return norm_date(v)
+
+
+# Anthropic 走独立解析（官网无 RSS）
+_a = fetch_anthropic()
+if _a is None:
+    stats.append(('Anthropic', 'FAIL', 0, 0)); print('  %-18s 抓取/解析失败' % 'Anthropic')
+else:
+    kept = []
+    for r in _a[:a.per_feed]:
+        iso_d = norm_date(r['date'])
+        try:
+            fresh = datetime.datetime.fromisoformat(iso_d) >= cutoff
+        except Exception:
+            fresh = True
+        if fresh:
+            kept.append(dict(source='Anthropic', source_kind='一手·厂商公告', title=r['title'],
+                             link=r['link'], date=iso_d, summary=r['summary']))
+    items += kept
+    stats.append(('Anthropic', 'OK', len(_a), len(kept)))
+    print('  %-18s 总 %-4d 窗内 %d' % ('Anthropic', len(_a), len(kept)))
+
 for name, url, kind, tag in FEEDS:
+    # arXiv 和 Reddit 都对连续请求限流：单独测能通、混在批量里就 429。
+    # arXiv 官方要求间隔 3 秒；Reddit 未公开阈值，给 2 秒经验值。
+    if name.startswith('arXiv'):
+        time.sleep(3)
+    elif name.startswith('r/'):
+        time.sleep(2)
     body = curl(url, timeout=30)
+    if not body:                       # arXiv / Reddit 的 429 多是瞬时的，退避重试一次
+        time.sleep(6)
+        body = curl(url, timeout=30)
     if not body:
         stats.append((name, 'FAIL', 0, 0)); print('  %-18s 抓取失败' % name); continue
     recs = parse_feed(body)
     kept = []
-    for r in recs[:a.per_feed]:
+    for r in recs[:CAP.get(name, a.per_feed)]:
         iso_d = norm_date(r.get('date'))
         fresh = True
         try:
