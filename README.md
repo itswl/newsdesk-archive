@@ -36,7 +36,7 @@ API 配额），所以核心字段——星标、fork、授权、停更、年龄
 
 | 默认时间 | 任务 | 数据源 | 采集脚本 |
 |---|---|---|---|
-| 06:30 | AI 简报 | 8 个 RSS/Atom feed + Hacker News | `bin/fetch_ainews.py` |
+| 06:30 | AI 简报 | 15 个源：厂商公告 / 科技媒体 / 论文 / 社区 | `bin/fetch_ainews.py` |
 | 11:35 | 豆瓣热门电影 | `search_subjects` + `rexxar` 详情接口 | `bin/fetch_douban.py` |
 | 16:40 | GitHub Trending | trending 页 + GitHub API 快照 | `bin/fetch_trending.py` |
 | 21:45 | 摸摸鱼热榜 | `momoyu.cc/api/hot/list` | `bin/fetch_momoyu.py` |
@@ -48,6 +48,32 @@ API 配额），所以核心字段——星标、fork、授权、停更、年龄
   6 小时整看着齐整，实际会让相邻两档共用同一个窗口。
 - **Trending 那一档的时刻**。单次触发让它的增量窗口天然对齐 24 小时，基线就是昨天
   同一时刻的快照。
+
+## AI 简报的源
+
+15 个，全部免鉴权、由 `curl` 抓，36 小时窗口。按可信层级分三类，**这个分类会随
+数据一起交给模型**——prompt 要求一手压二手（厂商公告与媒体报道冲突时以前者为准），
+社区热度只反映关注度、不等于事实核实。
+
+| 层级 | 源 |
+|---|---|
+| 一手·厂商公告 | Anthropic、OpenAI、Google DeepMind、Hugging Face、Qwen |
+| 一手·论文 | arXiv cs.AI |
+| 二手·科技媒体 | TechCrunch AI、The Verge AI、Ars Technica、MIT Tech Review |
+| 二手·独立评论 | Simon Willison、Import AI |
+| 社区 | Hacker News 首页、HN Algolia（AI 关键词 + 分数过滤）、r/LocalLLaMA |
+
+两个实现细节：
+
+- **Anthropic 官网没有 RSS**（`/rss.xml`、`/feed.xml` 都 404），只能解析 `/news`
+  页面。它有两套布局，标题分别在 `<h4>` 和 `<span>` 里，共同点是 class 含 `title`
+  ——按 class 匹配比按标签稳。解析出 0 条时当作失败上报，否则改版后这个源会无声消失。
+- **arXiv 与 Reddit 对连续请求限流**，抓取时给了间隔，失败再退避重试一次。论文和
+  社区帖天天都有，所以单独设了较低的每源上限：不限时实测社区源占到七成、一手公告
+  只有 2 条，日报不该是这个配比。
+
+加源改 `bin/fetch_ainews.py` 顶部的 `FEEDS`，RSS 2.0 与 Atom 都能解析。唯一要求是
+能用 `curl` 免鉴权拿到——分析层在沙箱里没有网络。
 
 ## 怎么组织的
 
