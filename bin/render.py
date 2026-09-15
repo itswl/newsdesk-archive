@@ -57,3 +57,54 @@ def cdata(text):
     整个 feed 就此损坏。拆成两段是唯一正确的做法，没有转义写法。
     """
     return '<![CDATA[' + text.replace(']]>', ']]]]><![CDATA[>') + ']]>'
+
+
+def today_state(reports_dir, sched_path, panels, plan, today=None, find=None):
+    """今天各任务的状态。key -> (状态, 提示文字, 完成时刻)
+
+    以「今天这份报告有没有产出」为准，而不是只读 scheduler.json。原因是顺序：
+    run_task.sh 在自己末尾重建并发布站点，而调度器要等 run_task.sh 退出之后
+    才把状态写成 ok——站点永远早一步生成，刚跑完的那个任务的 chip 一直是旧的，
+    要等下一档（5 小时后）重建才会变绿。实测 17:02:16 建站、17:02:48 才写状态。
+
+    顺带也修好了手动跑的情况：`run_task.sh momoyu` 直接跑不经过调度器，
+    scheduler.json 里根本没有记录，但报告确实产出了。
+
+    scheduler.json 仍然要读——「失败 / 重试中 / 跳过」这些是文件表达不了的，
+    没有产出文件时才轮到它说话。
+    """
+    import datetime, glob, json, os, time
+    if today is None:
+        today = datetime.date.today().isoformat()
+    if find is None:
+        def find(rdir, pats):
+            hits = [f for pat in pats for f in glob.glob(os.path.join(rdir, pat))]
+            return max(hits, key=os.path.getmtime) if hits else None
+    try:
+        with open(sched_path, encoding='utf-8') as fh:
+            st = json.load(fh)
+    except (OSError, ValueError):
+        st = {}
+    rdir = os.path.join(reports_dir, today)
+    out = {}
+    for key, _label, pats in panels:
+        f = find(rdir, pats) if os.path.isdir(rdir) else None
+        r = st.get(key) or {}
+        cur = r if r.get('date') == today else {}
+        if f:
+            at = time.strftime('%H:%M', time.localtime(os.path.getmtime(f)))
+            if '_draft' in os.path.basename(f):
+                out[key] = ('draft', '今天 %s 出了草稿，正式版还没生成' % at, at)
+            else:
+                out[key] = ('ok', '今天 %s 跑完' % at, at)
+            continue
+        status = cur.get('status')
+        if status == 'failed':
+            out[key] = ('failed', '今天失败了，重试 %s 次后放弃；详见 logs/' % cur.get('attempts', '?'), '')
+        elif status == 'retrying':
+            out[key] = ('retrying', '第 %s 次重试中' % cur.get('attempts', '?'), '')
+        elif status == 'skipped':
+            out[key] = ('skipped', '错过补跑截止点，今日跳过', '')
+        else:
+            out[key] = ('pending', '今天还没跑' + ('，计划 %s' % plan.get(key, '') if plan.get(key) else ''), '')
+    return out

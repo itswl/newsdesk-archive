@@ -15,6 +15,7 @@ import sys, os, glob, re, json, time, datetime, html as H
 import markdown
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from render import sanitize, cdata   # 渲染后清洗与 CDATA，见 bin/render.py
+from render import today_state as _today_state
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE = os.path.join(ROOT, 'site')
 REPORTS = os.path.join(ROOT, 'reports')
@@ -317,34 +318,23 @@ def _schedule():
     return out
 
 
+def today_state():
+    return _today_state(REPORTS, os.path.join(ROOT, 'state', 'scheduler.json'),
+                        PANELS, _schedule(), find=find)
+
+
 def task_status():
-    """读调度器状态，渲染成状态条。无人值守的东西必须把失败摆在看得见的地方——
+    """把 today_state() 渲染成状态条。无人值守的东西必须把失败摆在看得见的地方——
     只写进日志等于没有告警。每个 chip 带 title 说明，光靠颜色说不清。"""
-    try:
-        st = json.load(open(os.path.join(ROOT, 'state', 'scheduler.json')))
-    except (OSError, ValueError):
-        return ''          # 没跑过调度器时没有这个文件，属正常；其他异常照常抛出
-    today = datetime.date.today().isoformat()
-    plan = _schedule()
-    mark = {'ok': ('ok', '✓'), 'failed': ('bad', '✘'),
-            'retrying': ('warn', '…'), 'skipped': ('warn', '⊘')}
+    state = today_state()
+    mark = {'ok': ('ok', '✓'), 'draft': ('warn', '✎'), 'failed': ('bad', '✘'),
+            'retrying': ('warn', '…'), 'skipped': ('warn', '⊘'), 'pending': ('pend', '·')}
     chips, bad = [], False
     for key, label in (('ai', 'AI'), ('douban', '豆瓣'), ('trending', 'Trending'), ('momoyu', '摸摸鱼')):
-        r = st.get(key) or {}
-        at = plan.get(key, '')
-        if r.get('date') == today:
-            cls, ico = mark.get(r.get('status'), ('pend', '·'))
-            fin = (r.get('finished') or '')[11:16]
-            tip = {'ok': '今天 %s 跑完' % fin,
-                   'failed': '今天失败了，重试 %s 次后放弃；详见 logs/' % r.get('attempts', '?'),
-                   'retrying': '第 %s 次重试中' % r.get('attempts', '?'),
-                   'skipped': '错过补跑截止点，今日跳过',
-                   }.get(r.get('status'), '状态未知')
-            if r.get('status') in ('failed', 'skipped'):
-                bad = True
-        else:
-            cls, ico = 'pend', '·'
-            tip = '今天还没跑' + ('，计划 %s' % at if at else '')
+        status, tip, _ = state[key]
+        cls, ico = mark.get(status, ('pend', '·'))
+        if status in ('failed', 'skipped'):
+            bad = True
         chips.append('<span class="st %s" title="%s">%s %s</span>'
                      % (cls, H.escape(tip), ico, label))
     return '<div class="status%s">%s</div>' % (' alert' if bad else '', ''.join(chips))
@@ -502,16 +492,10 @@ def write_status():
         health = json.load(open(os.path.join(ROOT, 'state', 'health.json')))
     except (OSError, ValueError):
         health = {}
-    try:
-        sched = json.load(open(os.path.join(ROOT, 'state', 'scheduler.json')))
-    except (OSError, ValueError):
-        sched = {}
     today = datetime.date.today().isoformat()
-    tasks = {}
-    for key in ('ai', 'douban', 'trending', 'momoyu'):
-        r = sched.get(key) or {}
-        tasks[key] = {'status': r.get('status') if r.get('date') == today else 'pending',
-                      'finished': r.get('finished') if r.get('date') == today else None}
+    # 和状态条同一套判定：以报告是否产出为准，避免建站早于状态落盘导致的假阴性
+    tasks = {k: {'status': v[0], 'finished': v[2] or None}
+             for k, v in today_state().items()}
     hb = health.get('heartbeat')
     stale = None
     if hb:
@@ -526,7 +510,7 @@ def write_status():
            'stale_hours': stale,            # 距今多久。变大 = 调度器或整机不在了
            'tasks': tasks,
            'ok': bool(hb) and stale is not None and stale < 1
-                 and all(t['status'] in ('ok', 'pending') for t in tasks.values())}
+                 and all(t['status'] in ('ok', 'draft', 'pending') for t in tasks.values())}
     # 注意：这个文件会随 site/ 发布到公开桶，不要往里放路径、pid 之类的本机信息
     with open(os.path.join(SITE, 'status.json'), 'w', encoding='utf-8') as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
