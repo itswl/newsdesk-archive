@@ -10,11 +10,20 @@
 # ⚠️ Linux 分支在 macOS 开发机上无法验证，首次在 Linux 上使用请先跑
 #    bin/sandbox-selftest.sh 确认边界真的生效。
 
+# sandbox_argv [engine]  —— engine 缺省 codex（目前只有 codex 用外层沙箱）
 sandbox_argv() {
   SANDBOX_ARGV=()
+  local engine="${1:-codex}"
   local here; here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   # shellcheck source=/dev/null
-  . "$here/sandbox-paths.sh"
+  . "$here/sandbox-paths.sh" || {
+    echo "!!! 读不到 $here/sandbox-paths.sh，拒绝运行"; return 1; }
+  # 清单必须真的有内容。source 失败或清单被清空时，下面会生成一份
+  # (literal "") 什么都不拦的 profile —— 那比没有沙箱更糟，因为它看起来有。
+  if ! declare -F sbx_deny_dirs_for >/dev/null \
+     || [ "${#SBX_DENY_DIRS[@]}" -eq 0 ] || [ "${#SBX_RO_DIRS[@]}" -eq 0 ]; then
+    echo "!!! sandbox-paths.sh 未正确载入（清单为空），拒绝运行"; return 1
+  fi
 
   case "$(uname -s)" in
     Darwin)
@@ -28,7 +37,8 @@ sandbox_argv() {
         echo "(allow default)"
         echo "(deny file-read*"
         local p
-        for p in "${SBX_DENY_DIRS[@]}";  do echo "  (subpath \"$p\")"; done
+        # 按引擎过滤：codex 整个进程跑在这层里，拒掉 ~/.codex 就登录不了
+        while IFS= read -r p; do echo "  (subpath \"$p\")"; done < <(sbx_deny_dirs_for "$engine")
         for p in "${SBX_DENY_FILES[@]}"; do echo "  (literal \"$p\")"; done
         echo "  )"
         echo "(deny file-write*"
@@ -47,7 +57,7 @@ sandbox_argv() {
       # 目录盖空 tmpfs，文件盖 /dev/null，两者都让凭据读不出内容。
       SANDBOX_ARGV=(bwrap --dev-bind / / --die-with-parent)
       local p
-      for p in "${SBX_DENY_DIRS[@]}";  do [ -e "$p" ] && SANDBOX_ARGV+=(--tmpfs "$p"); done
+      while IFS= read -r p; do [ -e "$p" ] && SANDBOX_ARGV+=(--tmpfs "$p"); done < <(sbx_deny_dirs_for "$engine")
       for p in "${SBX_DENY_FILES[@]}"; do [ -e "$p" ] && SANDBOX_ARGV+=(--ro-bind /dev/null "$p"); done
       for p in "${SBX_RO_DIRS[@]}";    do [ -e "$p" ] && SANDBOX_ARGV+=(--ro-bind "$p" "$p"); done
       SANDBOX_ARGV+=(--)

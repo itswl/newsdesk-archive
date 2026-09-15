@@ -51,8 +51,13 @@ SETTINGS="$ROOT/state/agent-settings.json"
 
 render_settings() {
   [ -r "$TPL" ] || { echo "!!! 权限模板缺失: $TPL，拒绝运行"; return 1; }
-  # 模板里的 {{HOME}} / {{ROOT}} 在这里落成本机真实路径
-  sed -e "s|{{HOME}}|$HOME|g" -e "s|{{ROOT}}|$ROOT|g" "$TPL" > "$SETTINGS" || return 1
+  # 拒读路径不在模板里写死——和 codex 的 seatbelt 共用 bin/sandbox-paths.sh。
+  # 以前两边各一份手写清单，装了新工具只改一头，另一头默默落后。
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/sandbox-paths.sh" || { echo "!!! 读不到 sandbox-paths.sh，拒绝运行"; return 1; }
+  { sbx_deny_dirs_for claude; printf '%s\n' "${SBX_DENY_FILES[@]}"; } \
+    | python3 "$ROOT/bin/render_settings.py" "$TPL" "$SETTINGS" "$HOME" "$ROOT" \
+    || { echo "!!! 渲染权限文件失败，拒绝运行"; return 1; }
   python3 -c "import json,sys;json.load(open(sys.argv[1]))" "$SETTINGS" \
     || { echo "!!! 渲染后的 settings 不是合法 JSON，拒绝运行"; return 1; }
 }

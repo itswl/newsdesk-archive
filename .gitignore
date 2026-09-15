@@ -25,3 +25,4 @@ state/agent-settings.json
 # 环境特有配置：提交的是 *.example.* 模板，真实值留本地
 bin/config.conf
 deploy/wrangler.toml
+bin/sandbox-paths.local.sh

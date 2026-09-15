@@ -1,19 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "_template": "运行时模板。{{HOME}}/{{ROOT}} 由 bin/render_settings.py 替换，拒读路径由 bin/sandbox-paths.sh 注入后写到 state/agent-settings.json。不要直接把这个文件传给 --settings，也不要在这里手写凭据路径——加在 sandbox-paths.sh 里，那份同时供 codex 的 seatbelt 使用。",
   "permissions": {
     "defaultMode": "acceptEdits",
     "blockReadsOutsideWorkingDirectories": true,
     "disableBypassPermissionsMode": "disable",
     "deny": [
-      "Read({{HOME}}/.oci/**)",
-      "Read({{HOME}}/.ssh/**)",
-      "Read({{HOME}}/.aws/**)",
-      "Read({{HOME}}/.config/gh/**)",
-      "Read({{HOME}}/.codex/**)",
-      "Read({{HOME}}/.claude/**)",
-      "Read({{HOME}}/.gnupg/**)",
-      "Read({{HOME}}/.netrc)",
-      "Read({{HOME}}/.npmrc)",
       "Read({{HOME}}/Library/Keychains/**)",
       "Bash(git push:*)",
       "Bash(gh repo:*)",
@@ -40,47 +32,26 @@
     },
     "filesystem": {
       "denyRead": [
-        "{{HOME}}/.oci",
-        "{{HOME}}/.ssh",
-        "{{HOME}}/.aws",
-        "{{HOME}}/.config/gh",
-        "{{HOME}}/.codex",
-        "{{HOME}}/.claude",
-        "{{HOME}}/.gnupg",
-        "{{HOME}}/.docker",
-        "{{HOME}}/.netrc",
-        "{{HOME}}/.npmrc",
-        "{{HOME}}/Library/Keychains",
-        "{{HOME}}/Library/Application Support/Google",
-        "{{HOME}}/Library/Cookies"
+        "{{HOME}}/Library/Keychains"
       ],
       "allowWrite": [
         "{{ROOT}}"
       ],
       "denyWrite": [
         "{{ROOT}}/bin",
+        "{{ROOT}}/prompts",
         "{{ROOT}}/.git"
       ]
     },
     "credentials": {
       "files": [
-        {
-          "path": "{{HOME}}/.oci/oci_api_key.pem",
-          "mode": "deny"
-        },
-        {
-          "path": "{{HOME}}/.config/gh/hosts.yml",
-          "mode": "deny"
-        },
-        {
-          "path": "{{HOME}}/.codex/config.toml",
-          "mode": "deny"
-        }
+        { "path": "{{HOME}}/.oci/oci_api_key.pem", "mode": "deny" },
+        { "path": "{{HOME}}/.config/gh/hosts.yml", "mode": "deny" },
+        { "path": "{{HOME}}/.codex/config.toml", "mode": "deny" }
       ]
     }
   },
   "disableAllHooks": true,
   "autoMemoryEnabled": false,
-  "includeGitInstructions": false,
-  "_comment": "运行时模板：{{HOME}} 与 {{ROOT}} 由 bin/run_task.sh 替换后渲染到 state/agent-settings.json。不要直接把这个文件传给 --settings。"
+  "includeGitInstructions": false
 }
