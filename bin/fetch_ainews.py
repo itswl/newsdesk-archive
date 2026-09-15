@@ -113,115 +113,123 @@ def norm_date(s):
 # HN 首页与 HN Algolia 高度重叠，前者压得更低。
 CAP = {'arXiv cs.AI': 12, 'r/LocalLLaMA': 10, 'Hacker News': 12}
 
-ap = argparse.ArgumentParser()
-ap.add_argument('--hours', type=int, default=36, help='只保留这个时间窗内的条目')
-ap.add_argument('--per-feed', type=int, default=25)
-a = ap.parse_args()
 
-DD = data_dir('ainews', create=True)
-cutoff = datetime.datetime.now().astimezone() - datetime.timedelta(hours=a.hours)
-items, stats = [], []
+def main():
+    """采集流程。收进函数是为了能 import 上面那些纯函数来测——
+    以前整个流程在模块级，import 一下就联网抓一轮。"""
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--hours', type=int, default=36, help='只保留这个时间窗内的条目')
+    ap.add_argument('--per-feed', type=int, default=25)
+    a = ap.parse_args()
 
-def norm_date_or_raw(v):
-    return norm_date(v)
+    DD = data_dir('ainews', create=True)
+    cutoff = datetime.datetime.now().astimezone() - datetime.timedelta(hours=a.hours)
+    items, stats = [], []
+
+    def norm_date_or_raw(v):
+        return norm_date(v)
 
 
-# Anthropic 走独立解析（官网无 RSS）
-_a = fetch_anthropic()
-if _a is None:
-    stats.append(('Anthropic', 'FAIL', 0, 0)); print('  %-18s 抓取/解析失败' % 'Anthropic')
-else:
-    kept = []
-    for r in _a[:a.per_feed]:
-        iso_d = norm_date(r['date'])
-        try:
-            fresh = datetime.datetime.fromisoformat(iso_d) >= cutoff
-        except Exception:
-            fresh = True
-        if fresh:
-            kept.append(dict(source='Anthropic', source_kind='一手·厂商公告', title=r['title'],
-                             link=r['link'], date=iso_d, summary=r['summary']))
-    items += kept
-    stats.append(('Anthropic', 'OK', len(_a), len(kept)))
-    print('  %-18s 总 %-4d 窗内 %d' % ('Anthropic', len(_a), len(kept)))
+    # Anthropic 走独立解析（官网无 RSS）
+    _a = fetch_anthropic()
+    if _a is None:
+        stats.append(('Anthropic', 'FAIL', 0, 0)); print('  %-18s 抓取/解析失败' % 'Anthropic')
+    else:
+        kept = []
+        for r in _a[:a.per_feed]:
+            iso_d = norm_date(r['date'])
+            try:
+                fresh = datetime.datetime.fromisoformat(iso_d) >= cutoff
+            except Exception:
+                fresh = True
+            if fresh:
+                kept.append(dict(source='Anthropic', source_kind='一手·厂商公告', title=r['title'],
+                                 link=r['link'], date=iso_d, summary=r['summary']))
+        items += kept
+        stats.append(('Anthropic', 'OK', len(_a), len(kept)))
+        print('  %-18s 总 %-4d 窗内 %d' % ('Anthropic', len(_a), len(kept)))
 
-for name, url, kind, tag in FEEDS:
-    # arXiv 和 Reddit 都对连续请求限流：单独测能通、混在批量里就 429。
-    # arXiv 官方要求间隔 3 秒；Reddit 未公开阈值，给 2 秒经验值。
-    if name.startswith('arXiv'):
-        time.sleep(3)
-    elif name.startswith('r/'):
-        time.sleep(2)
-    body = curl(url, timeout=30)
-    if not body:                       # arXiv / Reddit 的 429 多是瞬时的，退避重试一次
-        time.sleep(6)
+    for name, url, kind, tag in FEEDS:
+        # arXiv 和 Reddit 都对连续请求限流：单独测能通、混在批量里就 429。
+        # arXiv 官方要求间隔 3 秒；Reddit 未公开阈值，给 2 秒经验值。
+        if name.startswith('arXiv'):
+            time.sleep(3)
+        elif name.startswith('r/'):
+            time.sleep(2)
         body = curl(url, timeout=30)
-    if not body:
-        stats.append((name, 'FAIL', 0, 0)); print('  %-18s 抓取失败' % name); continue
-    recs = parse_feed(body)
-    kept = []
-    for r in recs[:CAP.get(name, a.per_feed)]:
-        iso_d = norm_date(r.get('date'))
-        fresh = True
-        try:
-            fresh = datetime.datetime.fromisoformat(iso_d) >= cutoff
-        except Exception:
-            pass                      # 解析不出日期的一律保留，交给模型判断
-        if not fresh:
-            continue
-        kept.append(dict(source=name, source_kind=tag, title=r['title'],
-                         link=r.get('link', ''), date=iso_d, summary=r.get('summary', '')))
-    items += kept
-    stats.append((name, 'OK', len(recs), len(kept)))
-    print('  %-18s 总 %-4d 窗内 %d' % (name, len(recs), len(kept)))
+        if not body:                       # arXiv / Reddit 的 429 多是瞬时的，退避重试一次
+            time.sleep(6)
+            body = curl(url, timeout=30)
+        if not body:
+            stats.append((name, 'FAIL', 0, 0)); print('  %-18s 抓取失败' % name); continue
+        recs = parse_feed(body)
+        kept = []
+        for r in recs[:CAP.get(name, a.per_feed)]:
+            iso_d = norm_date(r.get('date'))
+            fresh = True
+            try:
+                fresh = datetime.datetime.fromisoformat(iso_d) >= cutoff
+            except Exception:
+                pass                      # 解析不出日期的一律保留，交给模型判断
+            if not fresh:
+                continue
+            kept.append(dict(source=name, source_kind=tag, title=r['title'],
+                             link=r.get('link', ''), date=iso_d, summary=r.get('summary', '')))
+        items += kept
+        stats.append((name, 'OK', len(recs), len(kept)))
+        print('  %-18s 总 %-4d 窗内 %d' % (name, len(recs), len(kept)))
 
-# Hacker News：按分数取，比 RSS 更能反映社区关注度
-hn_url = ('https://hn.algolia.com/api/v1/search_by_date?tags=story'
-          '&numericFilters=created_at_i%%3E%d,points%%3E40&hitsPerPage=80'
-          % int((datetime.datetime.now() - datetime.timedelta(hours=a.hours)).timestamp()))
-body = curl(hn_url, timeout=30)
-hn_kept = 0
-try:
-    for h in json.loads(body)['hits']:
-        t = h.get('title') or ''
-        if not AI_KW.search(t):
-            continue
-        items.append(dict(source='HN Algolia', source_kind='社区·按分数',
-                          title=t, link=h.get('url') or ('https://news.ycombinator.com/item?id=%s' % h['objectID']),
-                          date=norm_date(h.get('created_at')), points=h.get('points'),
-                          comments=h.get('num_comments'),
-                          hn_link='https://news.ycombinator.com/item?id=%s' % h['objectID'], summary=''))
-        hn_kept += 1
-    stats.append(('HN Algolia', 'OK', '-', hn_kept))
-    print('  %-18s AI 相关 %d' % ('HN Algolia', hn_kept))
-except Exception as e:
-    stats.append(('HN Algolia', 'FAIL', 0, 0)); print('  HN Algolia 失败: %r' % e)
+    # Hacker News：按分数取，比 RSS 更能反映社区关注度
+    hn_url = ('https://hn.algolia.com/api/v1/search_by_date?tags=story'
+              '&numericFilters=created_at_i%%3E%d,points%%3E40&hitsPerPage=80'
+              % int((datetime.datetime.now() - datetime.timedelta(hours=a.hours)).timestamp()))
+    body = curl(hn_url, timeout=30)
+    hn_kept = 0
+    try:
+        for h in json.loads(body)['hits']:
+            t = h.get('title') or ''
+            if not AI_KW.search(t):
+                continue
+            items.append(dict(source='HN Algolia', source_kind='社区·按分数',
+                              title=t, link=h.get('url') or ('https://news.ycombinator.com/item?id=%s' % h['objectID']),
+                              date=norm_date(h.get('created_at')), points=h.get('points'),
+                              comments=h.get('num_comments'),
+                              hn_link='https://news.ycombinator.com/item?id=%s' % h['objectID'], summary=''))
+            hn_kept += 1
+        stats.append(('HN Algolia', 'OK', '-', hn_kept))
+        print('  %-18s AI 相关 %d' % ('HN Algolia', hn_kept))
+    except Exception as e:
+        stats.append(('HN Algolia', 'FAIL', 0, 0)); print('  HN Algolia 失败: %r' % e)
 
-json.dump({'fetched_at': now_local().isoformat(timespec='seconds'),
-           'window_hours': a.hours, 'sources': [list(s) for s in stats], 'items': items},
-          open(os.path.join(DD, 'items.json'), 'w'), ensure_ascii=False, indent=1)
+    json.dump({'fetched_at': now_local().isoformat(timespec='seconds'),
+               'window_hours': a.hours, 'sources': [list(s) for s in stats], 'items': items},
+              open(os.path.join(DD, 'items.json'), 'w'), ensure_ascii=False, indent=1)
 
-# 给模型读的纯文本版
-L = ['AI 新闻采集 · %s' % now_local().strftime('%Y-%m-%d %H:%M %z'),
-     '时间窗: 最近 %d 小时 · 条目 %d' % (a.hours, len(items)), '',
-     '源状态:']
-for n, st, tot, kept in stats:
-    L.append('  %-18s %-5s 窗内 %s' % (n, st, kept))
-L.append('')
-by_src = {}
-for it in items:
-    by_src.setdefault(it['source'], []).append(it)
-for src in [f[0] for f in FEEDS] + ['HN Algolia']:
-    lst = by_src.get(src)
-    if not lst:
-        continue
-    L += ['=' * 72, '## %s  [%s]' % (src, lst[0]['source_kind']), '']
-    for i, it in enumerate(sorted(lst, key=lambda x: x.get('points') or 0, reverse=True), 1):
-        extra = ('  [%s分/%s评]' % (it['points'], it.get('comments'))) if it.get('points') else ''
-        L.append('%2d. %s%s' % (i, it['title'], extra))
-        L.append('    %s  %s' % (it['date'], it['link']))
-        if it.get('summary'):
-            L.append('    %s' % it['summary'][:300])
+    # 给模型读的纯文本版
+    L = ['AI 新闻采集 · %s' % now_local().strftime('%Y-%m-%d %H:%M %z'),
+         '时间窗: 最近 %d 小时 · 条目 %d' % (a.hours, len(items)), '',
+         '源状态:']
+    for n, st, tot, kept in stats:
+        L.append('  %-18s %-5s 窗内 %s' % (n, st, kept))
     L.append('')
-open(os.path.join(DD, 'digest.txt'), 'w').write('\n'.join(L))
-print('-> %s/{items.json, digest.txt}  共 %d 条' % (os.path.relpath(DD, ROOT), len(items)))
+    by_src = {}
+    for it in items:
+        by_src.setdefault(it['source'], []).append(it)
+    for src in [f[0] for f in FEEDS] + ['HN Algolia']:
+        lst = by_src.get(src)
+        if not lst:
+            continue
+        L += ['=' * 72, '## %s  [%s]' % (src, lst[0]['source_kind']), '']
+        for i, it in enumerate(sorted(lst, key=lambda x: x.get('points') or 0, reverse=True), 1):
+            extra = ('  [%s分/%s评]' % (it['points'], it.get('comments'))) if it.get('points') else ''
+            L.append('%2d. %s%s' % (i, it['title'], extra))
+            L.append('    %s  %s' % (it['date'], it['link']))
+            if it.get('summary'):
+                L.append('    %s' % it['summary'][:300])
+        L.append('')
+    open(os.path.join(DD, 'digest.txt'), 'w').write('\n'.join(L))
+    print('-> %s/{items.json, digest.txt}  共 %d 条' % (os.path.relpath(DD, ROOT), len(items)))
+
+
+if __name__ == '__main__':
+    main()

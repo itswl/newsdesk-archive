@@ -39,8 +39,11 @@ def load(p, default=None):
         return default
 
 def norm_link(u):
-    u = (u or '').split('?')[0].split('#')[0].rstrip('/')
-    return re.sub(r'^https?://(www\.)?', '', u).lower()
+    # 先小写再剥协议头：反过来的话 ^https?:// 是大小写敏感的，
+    # 一条 HTTPS://EXAMPLE.COM/... 剥不掉协议头，就和它的小写版本判成两条，
+    # 同一篇文章第二天会被当成新条目重新报一遍。
+    u = (u or '').lower().split('?')[0].split('#')[0].rstrip('/')
+    return re.sub(r'^https?://(www\.)?', '', u)
 
 def norm_title(t):
     return re.sub(r'\s+', '', re.sub(r'[【】\[\]（）()「」“”"\'：:，,。.！!？?、·\-—_]', '', t or '')).lower()
