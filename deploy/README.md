@@ -61,3 +61,26 @@ npx wrangler deploy --config deploy/wrangler.toml
 改缓存时长直接改 `worker.js` 顶部的 `TTL`，改完重新 deploy。
 
 站点内容由 `bin/backup_oci.sh` 推到对象存储，Worker 只读不写。
+
+## 定时自查怎么验
+
+`scheduled` 每 6 小时（UTC）拉一次 `status.json`，超过 `STALE_ALERT_HOURS` 没有新
+产出就推告警。**等它自然触发是验证不了的**：站点新鲜时它会正确地保持沉默，你看到的
+「没收到消息」和「整条链路是坏的」长得一模一样。
+
+要真验，强制一次陈旧。`--remote` 让它跑在边缘、能读到真的 `ALERT_WEBHOOK` secret，
+`--var` 只对这次会话生效、不用部署：
+
+```bash
+export CLOUDFLARE_API_TOKEN=<令牌>
+npx wrangler dev --remote --test-scheduled --var STALE_ALERT_HOURS:0 &
+sleep 20 && curl "http://localhost:8787/__scheduled"    # 会真的往群里发一条
+kill %1
+```
+
+看它被拒绝的话（飞书/Lark 错误也返回 200，失败写在 body 的 `code` 里），
+`npx wrangler tail` 能看到 Worker 打的日志。
+
+改过 `evaluate()` 之后跑 `TZ=UTC node deploy/worker.test.mjs`。**必须带 `TZ=UTC`**：
+Worker 就跑在 UTC，而在本机时区下，时区相关的那几条恰好会「通过」，测不出问题。
+`bin/test.sh` 已经带上了这个变量。
