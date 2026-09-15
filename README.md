@@ -11,7 +11,7 @@
 ## 快速开始
 
 ```bash
-cp bin/config.example.conf bin/config.conf     # 填引擎、模型、GitHub 令牌
+cp bin/config.example.conf bin/config.conf     # 填引擎与模型；其余留空即可
 python3 -m venv .venv && .venv/bin/pip install markdown
 
 bin/sandbox-selftest.sh          # 自检沙箱边界；未通过说明分析层能读到本机凭据
@@ -24,9 +24,13 @@ bin/schedulerctl.sh start        # 起调度器
 看「发布」与「订阅」两节。
 
 依赖：`curl`、Python 3、至少一个引擎（`claude` 或 `codex`）。`markdown` 必须装在
-项目内 `.venv`（系统 Python 受 PEP 668 保护）。**不需要 `gh`**——GitHub API 直接走
-HTTPS，但要在配置里填 `GITHUB_TOKEN`（只读公开仓库即可）：Trending 单次约 190 次
-调用，未认证只有 60 次/小时。
+项目内 `.venv`（系统 Python 受 PEP 668 保护）。
+
+**不需要 `gh`，也不需要 GitHub 令牌。** API 直接走 HTTPS，Trending 采集压到约 50 次
+调用、装得进未认证的 60 次/小时预算；停更判断走 `commits.atom`（github.com，不计
+API 配额），所以核心字段——星标、fork、授权、停更、年龄——在无令牌下全部保留。预算
+不足时会跳过部分仓库与下载量指标，并在报告里说明缺口。填 `GITHUB_TOKEN` 则预算变
+5000、深度不受限，但那是可选增强而非前提。
 
 ## 四个任务
 
