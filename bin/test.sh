@@ -19,6 +19,14 @@ done
 echo "════ 单元测试 ════"
 "$PY" -m unittest discover -s tests ${args+"${args[@]}"} || exit 1
 
+# Worker 的自查逻辑。必须 TZ=UTC——Worker 就跑在 UTC，而这里最要紧的一条正是
+# 时区：北京时间的时间戳被当成 UTC 会差 8 小时，监控就永远晚一个时区才响。
+if command -v node >/dev/null 2>&1 && [ -f "$ROOT/deploy/worker.test.mjs" ]; then
+  echo
+  echo "════ Worker 自查逻辑（UTC）════"
+  TZ=UTC node "$ROOT/deploy/worker.test.mjs" || exit 1
+fi
+
 [ "$UNIT_ONLY" = 1 ] && exit 0
 echo
 echo "════ 沙箱自检（实测边界）════"

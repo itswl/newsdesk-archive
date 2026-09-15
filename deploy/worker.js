@@ -63,4 +63,96 @@ export default {
     h.delete('opc-client-request-id');
     return new Response(res.body, { status: res.status, headers: h });
   },
+
+  // ── 定时自查 ──────────────────────────────────────────────────────────
+  // 由 wrangler.toml 的 [triggers] 驱动。这条是整套告警里唯一**不在那台
+  // Mac 上**的环节，也是唯一能发现「机器关了三天」的环节：
+  //   · bin/alert.py 覆盖「跑了但失败了」——但它要调度器活着才发得出来
+  //   · 日终核对同理，进程没了就不会核对
+  //   · status.json 让状态**可以**被外部监控，但可以被监控 ≠ 正在被监控
+  // Worker 本来就站在站点前面，天然在机器之外，由它来轮询这条线才闭合。
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(selfCheck(env));
+  },
 };
+
+// 站点多久没更新算出事。四个任务里相邻两档最长间隔 8.75 小时（21:45 → 次日
+// 06:30），机器夜里合盖、次日中午才补跑也就 ~19 小时，所以 26 小时不会误报，
+// 又能在「整整一天没动静」时叫出来。
+const STALE_HOURS_DEFAULT = 26;
+
+export async function evaluate(text, nowMs, thresholdHours) {
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return { bad: true, title: '❌ newsdesk 状态文件读不出来',
+             body: `status.json 不是合法 JSON，站点可能只发布了一半。\n收到：${text.slice(0, 200)}` };
+  }
+  // epoch 优先：它没有时区歧义。退回 ISO 时依赖字段自带偏移量——不带偏移量的
+  // ISO 会被 Worker（跑在 UTC）当成 UTC，北京时间算出来差整整 8 小时。
+  const ts = doc.generated_epoch ? doc.generated_epoch * 1000 : Date.parse(doc.generated);
+  if (!ts || Number.isNaN(ts)) {
+    return { bad: true, title: '❌ newsdesk 状态文件没有可用时间戳',
+             body: 'generated_epoch 与 generated 都取不到，无法判断新旧。' };
+  }
+  const age = (nowMs - ts) / 3.6e6;
+  if (age <= thresholdHours) return { bad: false, age };
+
+  const tasks = Object.entries(doc.tasks || {})
+    .map(([k, v]) => `  ${k}: ${v.status}${v.finished ? ' ' + v.finished : ''}`).join('\n');
+  return {
+    bad: true, age,
+    title: `❌ newsdesk 已停更 ${age.toFixed(1)} 小时`,
+    body: `站点最后一次更新是 ${doc.generated}（${doc.date}），已超过 ${thresholdHours} 小时没有新产出。\n`
+        + `常见原因：那台机器关机或长时间睡眠、调度器进程没了。\n\n最后一次已知的任务状态：\n${tasks}`,
+  };
+}
+
+async function selfCheck(env) {
+  const hook = env.ALERT_WEBHOOK;
+  if (!hook) return;                       // 没配就安静跳过，和 bin/alert.py 一致
+
+  const threshold = Number(env.STALE_ALERT_HOURS || STALE_HOURS_DEFAULT);
+  let verdict;
+  try {
+    // cacheTtl: 0 —— 必须绕开自己的边缘缓存，否则读到的是刚才那份，
+    // 「陈旧」这件事正好被自己藏住了
+    const res = await fetch(origin(env) + '/status.json', { cf: { cacheTtl: 0 } });
+    verdict = res.ok
+      ? await evaluate(await res.text(), Date.now(), threshold)
+      : { bad: true, title: `❌ newsdesk 取不到状态文件 (HTTP ${res.status})`,
+          body: '对象存储没有返回 status.json。桶被改动、被删、或权限变了。' };
+  } catch (e) {
+    verdict = { bad: true, title: '❌ newsdesk 自查请求失败',
+                body: String(e && e.message || e) };
+  }
+  if (verdict.bad) await notify(env, verdict.title, verdict.body);
+}
+
+async function notify(env, title, text) {
+  const body = `${title}\n${text}`;
+  const tpl = env.ALERT_PAYLOAD;
+  // {{TEXT}} 落在 JSON 字符串内部，必须按 JSON 规则转义——正文里一个换行或
+  // 引号就能把 payload 撑坏。和 bin/alert.py 同一个约定。
+  const payload = tpl
+    ? tpl.replace('{{TEXT}}', JSON.stringify(body).slice(1, -1))
+         .replace('{{TITLE}}', JSON.stringify(title).slice(1, -1))
+    : JSON.stringify({ title, text: body });
+  try {
+    const r = await fetch(env.ALERT_WEBHOOK, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: payload,
+    });
+    // 光看状态码不够：飞书/Lark、钉钉、企业微信都是错误也返回 200，失败写在
+    // body 的 code/errcode 里。只看状态码的话通道断了也一直以为发出去了。
+    const txt = await r.text();
+    if (!r.ok) return console.log('告警 HTTP 失败', r.status, txt.slice(0, 200));
+    try {
+      const d = JSON.parse(txt);
+      const code = d.code ?? d.errcode ?? d.StatusCode;
+      if (code !== undefined && Number(code) !== 0) console.log('告警被服务端拒绝', txt.slice(0, 200));
+    } catch { /* 非 JSON（Slack 返回纯文本 ok）按成功处理 */ }
+  } catch (e) {
+    console.log('告警发送异常', String(e));   // 自查失败不能反过来影响站点
+  }
+}

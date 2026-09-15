@@ -496,15 +496,26 @@ def write_status():
     # 和状态条同一套判定：以报告是否产出为准，避免建站早于状态落盘导致的假阴性
     tasks = {k: {'status': v[0], 'finished': v[2] or None}
              for k, v in today_state().items()}
+    now = datetime.datetime.now().astimezone()
     hb = health.get('heartbeat')
+    # 优先用 epoch 算，不受时区与新旧格式影响；老的心跳文件没有这个字段，
+    # 退回解析 ISO，并给可能不带偏移量的旧值补上本地时区
     stale = None
-    if hb:
+    hb_epoch = health.get('heartbeat_epoch')
+    if not hb_epoch and hb:
         try:
-            stale = round((datetime.datetime.now()
-                           - datetime.datetime.fromisoformat(hb)).total_seconds() / 3600, 2)
+            t = datetime.datetime.fromisoformat(hb)
+            hb_epoch = (t if t.tzinfo else t.astimezone()).timestamp()
         except ValueError:
-            pass
-    doc = {'generated': datetime.datetime.now().isoformat(timespec='seconds'),
+            hb_epoch = None
+    if hb_epoch:
+        stale = round((now.timestamp() - float(hb_epoch)) / 3600, 2)
+    doc = {'generated': now.isoformat(timespec='seconds'),
+           # 带时区的 ISO 给人看，epoch 给机器用。消费者是跑在 UTC 里的
+           # Cloudflare Worker：不带偏移量的 ISO 会被 JS 当成它自己的本地时间
+           # （即 UTC），北京时间的 17:47 被读成 UTC 17:47，算出来差整整 8 小时，
+           # 结果是机器关了 26 小时它只看到 18 小时，监控永远晚一个时区才响。
+           'generated_epoch': int(now.timestamp()),
            'date': today,
            'heartbeat': hb,                 # 调度器最近一次转动的时刻
            'stale_hours': stale,            # 距今多久。变大 = 调度器或整机不在了

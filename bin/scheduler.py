@@ -274,7 +274,9 @@ def heartbeat(state):
     这个文件由 build_site.py 复制进 site/ 一起发布，外部监控（uptime-kuma
     之类）轮询它、看时间戳是否变陈旧，才是唯一能覆盖「整机不在」的办法。
     """
-    data = {'heartbeat': datetime.datetime.now().isoformat(timespec='seconds'),
+    _now = datetime.datetime.now().astimezone()
+    data = {'heartbeat': _now.isoformat(timespec='seconds'),   # 带时区，见 build_site.write_status
+            'heartbeat_epoch': int(_now.timestamp()),
             'pid': os.getpid(),
             'schedule': ['%s %s' % (t, k) for t, k in SCHEDULE],
             'tasks': {task: {'date': (state.get(task) or {}).get('date'),

@@ -9,6 +9,23 @@ OCI_REGION    = "us-phoenix-1"
 OCI_NAMESPACE = "你的-object-storage-namespace"   # oci os ns get 可查
 OCI_BUCKET    = "你的公开桶名"
 
+# 站点多久没更新算出事（小时）。相邻两档最长间隔 8.75h，夜里合盖次日补跑约 19h，
+# 26 不会误报又能在「整整一天没动静」时叫出来。
+STALE_ALERT_HOURS = "26"
+# 告警体。留空用 {"title":..,"text":..}；飞书/Lark、钉钉、Slack 形状各不相同
+ALERT_PAYLOAD = "{\"msg_type\":\"text\",\"content\":{\"text\":\"{{TEXT}}\"}}"
+
 [[routes]]
 pattern   = "news.example.com/*"
 zone_name = "example.com"
+
+# ── 定时自查 ───────────────────────────────────────────────────────────
+# 每 6 小时一次（UTC）。这是整套告警里唯一不在那台 Mac 上的环节——
+# bin/alert.py 和日终核对都要调度器活着才发得出来，机器关了它们一起沉默。
+# 没有这条，status.json 只是「可以被外部监控」，不是「正在被监控」。
+#
+# 无状态：陈旧时每次都会报，关机三天大约 12 条。告警通道不该在真出事时反而安静，
+# 宁可重复。webhook 用 secret 注入，不写在这个文件里：
+#   printf '%s' "$WEBHOOK" | npx wrangler secret put ALERT_WEBHOOK
+[triggers]
+crons = ["0 */6 * * *"]
