@@ -12,9 +12,9 @@
 
 ```bash
 cp bin/config.example.conf bin/config.conf     # 填引擎与模型；其余留空即可
-python3 -m venv .venv && .venv/bin/pip install markdown
+python3 -m venv .venv && .venv/bin/pip install markdown nh3
 
-bin/sandbox-selftest.sh          # 自检沙箱边界；未通过说明分析层能读到本机凭据
+bin/test.sh                      # 单测 + 沙箱边界实测；未通过说明分析层能读到本机凭据
 bin/run_task.sh douban           # 手跑一个任务验证链路
 bin/schedulerctl.sh start        # 起调度器
 ```
@@ -23,8 +23,9 @@ bin/schedulerctl.sh start        # 起调度器
 就能看——页面自包含，不需要起服务器。想让别人也能访问、或想用阅读器订阅，才需要
 看「发布」与「订阅」两节。
 
-依赖：`curl`、Python 3、至少一个引擎（`claude` 或 `codex`）。`markdown` 必须装在
-项目内 `.venv`（系统 Python 受 PEP 668 保护）。
+依赖：`curl`、Python 3、至少一个引擎（`claude` 或 `codex`）。`markdown` 与 `nh3` 必须
+装在项目内 `.venv`（系统 Python 受 PEP 668 保护）。`nh3` 是 HTML 清洗器，装不上会直接
+拒绝生成站点——报告正文含第三方文本，不清洗就发布等于存储型 XSS。
 
 **不需要 `gh`，也不需要 GitHub 令牌。** API 直接走 HTTPS，Trending 采集压到约 50 次
 调用、装得进未认证的 60 次/小时预算；停更判断走 `commits.atom`（github.com，不计
@@ -105,6 +106,7 @@ API 配额），所以核心字段——星标、fork、授权、停更、年龄
 | `BACKUP_BUCKET` / `PUBLISH_BUCKET` | 对象存储桶名，**留空即关闭备份与发布** |
 | `SITE_URL` | 对外地址，用于生成 Atom feed（feed 里必须是绝对链接），**留空即不生成** |
 | `CONTACT` | 页脚侵权联系邮箱，留空则不显示具体地址 |
+| `ALERT_WEBHOOK` / `ALERT_PAYLOAD` | **建议配**。任务失败/漏跑时推通知，留空则失败无人知道，见下 |
 
 ## 常用命令
 
@@ -113,7 +115,9 @@ bin/run_task.sh <task> [engine]        # 手跑一个任务，引擎可单次覆
 bin/schedulerctl.sh start|stop|status  # 调度器
 bin/schedulerctl.sh plan               # 看未来 24 小时触发计划
 bin/schedulerctl.sh once ai codex      # 通过调度器跑一次并指定引擎
-bin/sandbox-selftest.sh                # 沙箱边界自检
+bin/sandbox-selftest.sh                # 沙箱边界自检（实测，慢）
+bin/test.sh [--unit]                   # 全部测试；--unit 只跑纯函数那层（<1 秒）
+bin/restore_oci.sh [--days N]          # 换机器时从私有桶拉回产出
 ```
 
 调度器是纯 stdlib 常驻进程，不依赖 launchd 或 cron。关键行为是**睡眠补跑**：不是
@@ -124,11 +128,47 @@ bin/sandbox-selftest.sh                # 沙箱边界自检
 夜间那档约 8.2 小时），超过就当天记 `skipped`。这个截止点必须小于两档间隔，否则
 补跑会推进下一档的用量窗口——见下一节。
 
+## 失败时怎么知道
+
+无人值守的东西，最重要的不是跑得多好，是**坏了有人知道**。这里有两层，缺一层都有盲区：
+
+**① 主动推送**（配 `ALERT_WEBHOOK`）。任务重试到底仍失败、错过补跑截止点、调度循环
+连续异常、日终核对发现缺口，各推一条。两种形状自动区分：URL 里含 `{{TEXT}}` 就走
+GET（Bark / ntfy 这类），否则 POST JSON；飞书/钉钉/Slack 的体不同，用 `ALERT_PAYLOAD`
+自定义。告警发不出去只记一行日志，绝不反过来弄坏流水线。
+
+**② 外部轮询**（配了 `PUBLISH_BUCKET` 才有）。站点上会发布一个 `status.json`：
+
+```json
+{ "generated": "...", "heartbeat": "...", "stale_hours": 0.5,
+  "tasks": { "ai": {"status": "ok"}, ... }, "ok": true }
+```
+
+**这一层不能省**：本机的调度器报不了自己的死——机器关了、进程被杀，它没机会发任何
+东西。只有外部监控（uptime-kuma / betteruptime / 别的机器上一条 cron）轮询这个文件、
+看 `stale_hours` 是不是变陈旧了，才覆盖得到「整机不在」。uptime-kuma 的话选
+HTTP(s) - Json Query，Query 填 `$.ok`，期望值 `true`。
+
+## 测试
+
+```bash
+bin/test.sh --unit     # 纯函数，不碰网络，<1 秒
+bin/test.sh            # 再加沙箱边界实测（起真的 sandbox-exec，慢）
+```
+
+测的是「改一行看着没事、跑一周才发现错」的那类：HTML 清洗器的拦截与误伤、Atom 的
+`]]>` 拆分、补跑截止点的跨日/跨月/跨年、时间表与用量窗口是否自洽、Anthropic 两套
+页面布局的解析、跨期判重的 URL 归一化、以及沙箱的 fail-closed 开关有没有被改弱。
+
 ## 安全边界
 
 分析层是唯一接触外部不可信文本的环节——RSS 正文、仓库描述、热榜标题都是别人能写的
 内容，每天无人值守地喂给模型。所以它跑在沙箱里：**读不到任何明文凭据，也出不了网**，
 `bin/` 与 `prompts/` 对它只读。**不使用 `--dangerously-skip-permissions`。**
+
+**发布前清洗 HTML。** python-markdown 默认原样放行 HTML，而报告正文里引用的是别人写的
+文本（HN 标题、仓库描述、豆瓣简介）。一条构造过的标题被原样抄进报告，就会在公开页面上
+执行脚本。所以渲染结果一律过 `bin/render.py` 的白名单清洗，nh3 装不上就拒绝生成站点。
 
 两个引擎各自恰好一层沙箱：claude 用自带的，codex 自带的**只限制写不限制读**，改用外层
 seatbelt（macOS）或 bubblewrap（Linux）。**不要套两层**——嵌套会让 Bash 整个失效，而
@@ -175,7 +215,9 @@ data/ reports/ site/ logs/ state/ attic/    运行时生成，不进版本控制
 
 `bin/config.conf` 与 `deploy/wrangler.toml` 含环境特有值，同样不进版本控制——仓库里
 只有对应的 `*.example.*` 模板。`data/trending/<日期>/snap_t3.json` 是次日增量的基线，
-换机器要手动带过去。
+换机器用 `bin/restore_oci.sh` 从私有桶拉回（含 `state/`，所以当天已跑过的任务不会重跑）。
+`state/sandbox.sb` 与 `state/agent-settings.json` 有意不备份——它们按本机路径渲染，
+换机器会自动重新生成。
 
 ## 更多
 
@@ -184,3 +226,11 @@ data/ reports/ site/ logs/ state/ attic/    运行时生成，不进版本控制
   `CLAUDE.md` 软链到它，两个引擎读同一份。
 - `deploy/README.md`——Cloudflare Worker 的部署与排查记录。
 - `prompts/`——四个任务的分析契约，方法论的坑最终都落在这里。
+
+## 许可
+
+代码以 MIT 许可发布，见 `LICENSE`。
+
+站点产出不在此列：报告中引用的标题、摘要、简介等材料版权归原作者或原平台所有，本站
+仅作非商业性聚合与评述、并保留原文链接。如认为内容侵犯了您的权益，按页脚联系方式反馈
+即删。

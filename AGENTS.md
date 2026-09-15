@@ -44,7 +44,9 @@
 
 ## 时间点
 
-**相邻两档间隔 5 小时 5 分是有意的**：Claude 订阅的用量限额按 5 小时滚动窗口重置，这个间隔让每个任务落进全新窗口、互不抢额度，多出的 5 分钟防止卡在边界上。别把它「整理」成 6 小时整。
+**相邻两档间隔 5 小时 5 分是有意的**：Claude 订阅的用量限额按 5 小时滚动窗口重置，这个间隔让每个任务落进全新窗口、互不抢额度，多出的 5 分钟防止卡在边界上。约束是**不小于**一个窗口——间隔比 5 小时窄才会让两档共用窗口，比它宽（比如 6 小时整）是安全的，只是没必要。
+
+**但这是在押注一个别人未文档化的行为**，隐含三个前提：一直用 Claude 订阅、窗口语义不变、重试与补跑不越进相邻窗口。任一条变了，时间表**看起来仍然正确**却已失效——这是最难发现的故障形态。所以窗口长度写成 `scheduler.py` 顶部的 `USAGE_WINDOW_HOURS`，`validate_schedule()` 在启动时核对时间表、补跑余量、单任务超时三者是否仍然自洽，不自洽就拒绝启动。另外失败日志里命中 `QUOTA_PATTERNS`（429 / usage limit / quota 之类）会单独告警——那才是这套假设失效的第一个信号，别把它当成普通的偶发失败。
 
 **补跑截止点必须小于两档间隔**，否则一个睡过头的任务会补跑到下一档已经开始之后，两个任务挤进同一个用量窗口——正是这套间隔要避免的事。所以 `scheduler.py` 里不是写死小时数，而是算「下一档开始前 `CATCHUP_MARGIN_MIN` 分钟」，跟着 `SCHEDULE` 自动变。
 
@@ -63,3 +65,44 @@ Worker 那层按扩展名给 content-type，别退回无条件的 `text/html`—
 ## 数据的去向
 
 `data/`、`reports/`、`site/` 都不进版本控制（仓库只放代码）。每天同步到 OCI 对象存储：私有桶存全量备份，公开桶只放 `site/`（`ObjectReadWithoutList`，可读不可列表），前面挂 Cloudflare Worker 对外提供域名（见 `deploy/`）。桶名、域名等环境特有值都在 `bin/config.conf` 与 `deploy/wrangler.toml`，这两个文件不进版本控制，仓库里只有 `*.example.*` 模板。**公开桶里有豆瓣简介、各平台热榜标题等第三方文本，改动发布范围前先想清楚。**`data/trending/<日期>/snap_t3.json` 是次日增量的基线，别删最新一份 —— `bin/prune.py` 对此有保护。
+
+## 发布前必须清洗 HTML
+
+`build_site.py` 渲染报告正文用的是 python-markdown，而它**默认原样放行 HTML**（3.0 之后 `safe_mode` 已移除，没有开关可开）。报告正文里引用的却全是别人写的文本：HN 标题、仓库描述、豆瓣简介、热榜标题。模型把一条构造过的标题原样抄进报告，`<img src=x onerror=…>` 就会在公开页面上执行。
+
+所以 `md.convert()` 的结果必须过 `bin/render.py` 的 `sanitize()`，标签白名单不含 `img/svg/iframe/form`，`style` 只放行 `td/th` 上的 `text-align`。**不要因为「站点没有登录态」放松这条**——`news.wetalk.eu.org` 与 `down.` / `wechat.` / `blog.` 同属 `wetalk.eu.org`，父域 cookie 会被带到。
+
+nh3 缺失时 `render.py` 直接 `SystemExit`，和沙箱一样 fail-closed，不静默降级成不清洗。
+
+## 拒绝清单只有一份
+
+`bin/sandbox-paths.sh` 是唯一事实来源，三个消费方都从它生成：seatbelt/bubblewrap profile（`sandbox.sh`）、claude 的权限文件（`render_settings.py`）、自检（`sandbox-selftest.sh`）。**以前 claude 那份是手写的第二份清单**，装了新工具只改一头，另一头默默落后——实测漏掉过 `~/.claude.json` 和 `~/.pi/agent/models.json`。
+
+denylist 天然会漂移，所以：机器特有的路径写进 `bin/sandbox-paths.local.sh`（不进版本控制），加完跑一次 `bin/sandbox-selftest.sh` 确认真的拦住了。找法见 `sandbox-paths.local.example.sh` 里的 `find` 命令。
+
+**引擎自己的认证路径必须从它自己的沙箱里排除**，这由 `sbx_deny_dirs_for <engine>` 负责：codex 整个进程跑在外层沙箱里，拒掉 `~/.codex` 就登录不了；claude 不同，它的沙箱只约束模型执行的命令，自己读配置在沙箱外，所以 `~/.claude` 对它照拒不误。
+
+## 失败必须有人知道
+
+这条流水线的失败闭环原本只写在报告和站点状态条里，而那**只有已经打开页面的人**才看得见。整条停摆不会有任何人知道——最安全的失败方式同时也是最沉默的。
+
+现在有两层：
+
+- `bin/alert.py` + `ALERT_WEBHOOK`：任务终局失败、错过补跑、调度循环连续异常、日终核对有缺口，各推一条。告警失败绝不反过来弄坏流水线（所有异常吞掉只记日志）。**判定成功不能只看 HTTP 状态码**——飞书/Lark、钉钉、企业微信都是错误也返回 200，失败写在 body 的 `code`/`errcode` 里（实测给 Lark 发错形状的 payload 得到 `HTTP 200 + {"code":19002}`）。只看状态码的话通道断了也一直报「已发送」，而告警静默失效正是这套东西要防的那件事。
+- `site/status.json`：**本机的调度器报不了自己的死**——机器关了、进程被杀，它没机会发任何东西。这个文件随站点发布，外部监控轮询 `$.stale_hours` 或 `$.ok` 才能覆盖「整机不在」。
+
+`daily_audit()` 是单独做的一次核对，不能只靠逐条告警：漏跑（任务压根没触发）不产生任何失败记录，只有主动核对才看得见。
+
+## 测试
+
+`bash bin/test.sh`（`--unit` 只跑快的那层）。测的是「改一行看着没事、跑一周才发现错」的那类：清洗器的拦截与误伤、CDATA 的 `]]>` 拆分、补跑截止点的跨日/跨月/跨年、时间表与用量窗口是否自洽、Anthropic 两套布局的解析与「解析出 0 条必须报失败」、跨期判重的归一化、以及沙箱 fail-closed 开关有没有被改弱。
+
+`data/` 天然是 fixture，但单测一律不碰网络、不依赖本机装了什么。沙箱实测那层慢且依赖环境，所以拆在 `--unit` 之外。
+
+写新采集脚本时**流程要收进 `main()`**：`fetch_ainews.py` 早先整个流程在模块级，import 一下就联网抓一轮，纯函数根本没法测。
+
+## 恢复
+
+`bin/restore_oci.sh` 从私有桶拉回 `reports/ site/ state/ data/`。`state/` 现在也备份了——不带上的话换机器后当天任务会全部重跑一遍（浪费一整个用量窗口），`fetched-*.ok` 丢了连采集都会重来。
+
+`state/sandbox.sb` 与 `state/agent-settings.json` **有意不备份**：它们是按本机路径渲染的，换机器必须重新生成，带过去反而是错的。
