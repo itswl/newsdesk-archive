@@ -147,6 +147,7 @@ em{color:var(--fg2)}
 .st.bad{color:var(--bad-fg);border-color:var(--bad-bd);background:var(--bad-bg);font-weight:600}
 .st.warn{color:var(--warn-fg);border-color:var(--warn-bd)}
 .st.pend{opacity:.5}
+.st[title]{cursor:help}
 footer.dis{margin-top:48px;padding-top:16px;border-top:1px solid var(--bd);
   color:var(--fg3);font-size:12px;line-height:1.85}
 footer.dis a{color:var(--fg2);text-decoration:underline}
@@ -268,26 +269,49 @@ document.onkeydown=function(e){
 })();
 """
 
+def _schedule():
+    """从 scheduler.py 读时间表，供状态条的提示文案用——写死会跟真实调度漂移。"""
+    out = {}
+    try:
+        src = open(os.path.join(ROOT, 'bin', 'scheduler.py')).read()
+        blk = src.split('SCHEDULE = [', 1)[1].split(']', 1)[0]
+        for t, k in re.findall(r"\('(\d{1,2}:\d{2})',\s*'(\w+)'\)", blk):
+            out[k] = t
+    except (OSError, IndexError):
+        pass
+    return out
+
+
 def task_status():
     """读调度器状态，渲染成状态条。无人值守的东西必须把失败摆在看得见的地方——
-    只写进日志等于没有告警。"""
+    只写进日志等于没有告警。每个 chip 带 title 说明，光靠颜色说不清。"""
     try:
         st = json.load(open(os.path.join(ROOT, 'state', 'scheduler.json')))
     except (OSError, ValueError):
         return ''          # 没跑过调度器时没有这个文件，属正常；其他异常照常抛出
     today = datetime.date.today().isoformat()
+    plan = _schedule()
     mark = {'ok': ('ok', '✓'), 'failed': ('bad', '✘'),
             'retrying': ('warn', '…'), 'skipped': ('warn', '⊘')}
     chips, bad = [], False
     for key, label in (('ai', 'AI'), ('douban', '豆瓣'), ('trending', 'Trending'), ('momoyu', '摸摸鱼')):
         r = st.get(key) or {}
+        at = plan.get(key, '')
         if r.get('date') == today:
             cls, ico = mark.get(r.get('status'), ('pend', '·'))
+            fin = (r.get('finished') or '')[11:16]
+            tip = {'ok': '今天 %s 跑完' % fin,
+                   'failed': '今天失败了，重试 %s 次后放弃；详见 logs/' % r.get('attempts', '?'),
+                   'retrying': '第 %s 次重试中' % r.get('attempts', '?'),
+                   'skipped': '错过补跑截止点，今日跳过',
+                   }.get(r.get('status'), '状态未知')
             if r.get('status') in ('failed', 'skipped'):
                 bad = True
         else:
             cls, ico = 'pend', '·'
-        chips.append('<span class="st %s">%s %s</span>' % (cls, ico, label))
+            tip = '今天还没跑' + ('，计划 %s' % at if at else '')
+        chips.append('<span class="st %s" title="%s">%s %s</span>'
+                     % (cls, H.escape(tip), ico, label))
     return '<div class="status%s">%s</div>' % (' alert' if bad else '', ''.join(chips))
 
 
@@ -368,7 +392,8 @@ for day in days:
     for key, label, pats in PANELS:
         f = find(rdir, pats)
         if not f:
-            tabs.append('<button class="tab absent" data-t="%s" title="当天无此报告">%s</button>'
+            tabs.append('<button class="tab absent" data-t="%s" '
+                        'title="当天没有这份报告——任务没跑，或者跑了但失败了">%s</button>'
                         % (key, label))
             continue
         draft = '_draft' in os.path.basename(f)
@@ -377,8 +402,10 @@ for day in days:
         body = md.convert(open(f, encoding='utf-8').read())
         # 宽表在窄屏只能横向滚，包一层容器才能加滚动提示
         body = body.replace('<table>', '<div class="tw"><div><table>').replace('</table>', '</table></div></div>')
-        tabs.append('<button class="tab%s" data-t="%s">%s%s</button>' % (
-            ' on' if not panes else '', key, label, ' <em>草稿</em>' if draft else ''))
+        tabs.append('<button class="tab%s" data-t="%s"%s>%s%s</button>' % (
+            ' on' if not panes else '', key,
+            ' title="这是草稿版本：当天的正式版还没生成，正式版出来后会取代它"' if draft else '',
+            label, ' <em title="草稿版本，非最终稿">草稿</em>' if draft else ''))
         panes.append('<section class="pane%s" id="p-%s"><div class="src">%s</div>%s</section>' % (
             '' if panes else ' on', key, H.escape(os.path.relpath(f, ROOT)), body))
         entries.append((day, key, label, os.path.getmtime(f), body))
