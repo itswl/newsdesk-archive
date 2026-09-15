@@ -14,7 +14,9 @@ function origin(env) {
 }
 
 // 站点每天更新四次，边缘缓存 5 分钟够用；index.html 更短一些，免得刚跑完还看到旧的
-const TTL = { 'index.html': 120, 'feed.xml': 120, 'archive.html': 300, _default: 300 };
+// status.json 是给外部监控轮询的，缓存必须短——缓存久了「陈旧」这件事本身
+// 就被 CDN 藏起来了，监控看到的永远是 5 分钟前的健康状态
+const TTL = { 'index.html': 120, 'feed.xml': 120, 'status.json': 30, 'archive.html': 300, _default: 300 };
 
 export default {
   async fetch(request, env) {
@@ -27,7 +29,7 @@ export default {
     if (path === '/' || path === '') path = '/index.html';
     if (path.endsWith('/')) path += 'index.html';
     // 只允许取站点自身产出的文件，不给遍历到桶里别的前缀
-    if (!/^\/[A-Za-z0-9._-]+\.(html|xml)$/.test(path)) {
+    if (!/^\/[A-Za-z0-9._-]+\.(html|xml|json)$/.test(path)) {
       return new Response('Not Found', { status: 404 });
     }
 
@@ -47,9 +49,10 @@ export default {
 
     const h = new Headers(res.headers);
     // 按扩展名给类型——之前无条件打 text/html，feed 发出去阅读器不认
-    h.set('content-type', name.endsWith('.xml')
-      ? 'application/atom+xml; charset=utf-8'
-      : 'text/html; charset=utf-8');
+    h.set('content-type',
+      name.endsWith('.xml')  ? 'application/atom+xml; charset=utf-8' :
+      name.endsWith('.json') ? 'application/json; charset=utf-8' :
+                               'text/html; charset=utf-8');
     h.set('cache-control', `public, max-age=60, s-maxage=${ttl}`);
     h.set('x-content-type-options', 'nosniff');
     h.set('referrer-policy', 'no-referrer');
