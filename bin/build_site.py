@@ -1,0 +1,468 @@
+#!/usr/bin/env python3
+"""把 reports/<日期>/ 下的四份 Markdown 合成静态站。
+
+用法: build_site.py [YYYY-MM-DD]
+日期参数只用于提示，每次都会重建全部日期页 —— 因为「上一天/下一天」导航
+要嵌进每个页面，只重建今天会让昨天的「下一天」永远指不到今天。
+页数不多（一天一页），全量重建的开销可以忽略。
+
+产物:
+  site/<YYYY-MM-DD>.html   每日页，四 Tab + 日期导航
+  site/index.html          最新一天的副本
+  site/archive.html        全部日期总览，标出每天有哪几份报告
+"""
+import sys, os, glob, re, json, time, datetime, html as H
+import markdown
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SITE = os.path.join(ROOT, 'site')
+REPORTS = os.path.join(ROOT, 'reports')
+os.makedirs(SITE, exist_ok=True)
+
+PANELS = [
+    ('ai',       'AI 简报',         ['ai-news.md']),
+    ('trending', 'GitHub Trending', ['github-trending.md', 'github-trending_draft*.md']),
+    ('momoyu',   '摸摸鱼热榜',       ['momoyu.md']),
+    ('douban',   '豆瓣电影',         ['douban.md']),
+]
+# 归档页是扫读视图，用短标签——全名会在窄屏折成两行，几十天下来页面长一倍
+SHORT = {'ai': 'AI', 'trending': 'Trending', 'momoyu': '摸摸鱼', 'douban': '豆瓣'}
+
+CSS = """
+/* 配色抽成变量，两套主题只差这一块。避免维护两份完整样式表然后慢慢漂移。 */
+:root{
+  --bg:#0f1115; --bg2:#151922; --bg3:#1d2330; --bg4:#1c2230; --bg5:#161b26;
+  --fg:#d7dae0; --fg2:#98a1b2; --fg3:#5d6675; --fgh:#fff; --fgh2:#b9c2d0;
+  --bd:#262c38; --bd2:#2b3342; --bd3:#2a3140;
+  --link:#5b9bff; --accent:#2f6df6; --code:#f0a868;
+  --stripe:#141926; --quote-bd:#3a4658;
+  --ok-fg:#7fd39b; --ok-bd:#2c5138;
+  --bad-fg:#ff9d9d; --bad-bd:#7a3030; --bad-bg:#2e1818;
+  --warn-fg:#d9c07a; --warn-bd:#6b5a26; --warn-bg:#3a3218;
+  --chip-fg:#9fc0f0; --chip-bg:#1b2c4d; --chip-bd:#2f4d80;
+  --alert-bg:#3a1c1c; --alert-bd:#6b2b2b;
+  --fade:15,17,21;
+  color-scheme:dark;
+}
+html[data-theme=light]{
+  --bg:#fbfbfa; --bg2:#f2f2ef; --bg3:#fff; --bg4:#f0efec; --bg5:#f5f4f1;
+  --fg:#2b2f36; --fg2:#5f6773; --fg3:#8b9199; --fgh:#14171c; --fgh2:#3b424c;
+  --bd:#e3e2de; --bd2:#d6d5d0; --bd3:#dedcd7;
+  --link:#1a5fd0; --accent:#2f6df6; --code:#a8590c;
+  --stripe:#f6f5f2; --quote-bd:#c5c7c2;
+  --ok-fg:#15803d; --ok-bd:#b3ddc1;
+  --bad-fg:#b91c1c; --bad-bd:#efb9b9; --bad-bg:#fdecec;
+  --warn-fg:#8a6108; --warn-bd:#e7d09a; --warn-bg:#fdf5e3;
+  --chip-fg:#1a4f9c; --chip-bg:#e5eefc; --chip-bd:#bcd3f5;
+  --alert-bg:#fdecec; --alert-bd:#efb9b9;
+  --fade:251,251,250;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:light){
+  html:not([data-theme]){
+    --bg:#fbfbfa; --bg2:#f2f2ef; --bg3:#fff; --bg4:#f0efec; --bg5:#f5f4f1;
+    --fg:#2b2f36; --fg2:#5f6773; --fg3:#8b9199; --fgh:#14171c; --fgh2:#3b424c;
+    --bd:#e3e2de; --bd2:#d6d5d0; --bd3:#dedcd7;
+    --link:#1a5fd0; --code:#a8590c;
+    --stripe:#f6f5f2; --quote-bd:#c5c7c2;
+    --ok-fg:#15803d; --ok-bd:#b3ddc1;
+    --bad-fg:#b91c1c; --bad-bd:#efb9b9; --bad-bg:#fdecec;
+    --warn-fg:#8a6108; --warn-bd:#e7d09a; --warn-bg:#fdf5e3;
+    --chip-fg:#1a4f9c; --chip-bg:#e5eefc; --chip-bd:#bcd3f5;
+    --alert-bg:#fdecec; --alert-bd:#efb9b9;
+    --fade:251,251,250;
+    color-scheme:light;
+  }
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
+  font:15px/1.75 -apple-system,"PingFang SC","Helvetica Neue",Arial,sans-serif}
+header{position:sticky;top:0;z-index:9;background:var(--bg2);border-bottom:1px solid var(--bd);padding:12px 22px}
+.bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:11px}
+h1.site{margin:0;font-size:17px;font-weight:600;color:var(--fgh);letter-spacing:.3px}
+.nav{display:flex;align-items:center;gap:5px;margin-left:auto}
+.nav a,.nav span.dis,.nav button.tg{display:inline-block;padding:5px 11px;border-radius:6px;font-size:13px;
+  border:1px solid var(--bd2);background:var(--bg3);color:var(--fg2);text-decoration:none;font-family:inherit;cursor:pointer}
+.nav a:hover,.nav button.tg:hover{background:var(--bg4);color:var(--fgh2);text-decoration:none}
+.nav span.dis{opacity:.35}
+.nav select{background:var(--bg3);color:var(--fgh2);border:1px solid var(--bd2);border-radius:6px;
+  padding:5px 9px;font-size:13px;font-family:inherit;min-width:0;max-width:100%}
+.nav a.all{background:var(--bg4);color:var(--link)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tab{background:var(--bg3);color:var(--fg2);border:1px solid var(--bd2);border-radius:7px;padding:7px 15px;font-size:14px;cursor:pointer;font-family:inherit}
+.tab:hover{background:var(--bg4);color:var(--fgh2)}
+.tab.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.tab em{font-style:normal;font-size:11px;opacity:.85;background:rgba(255,255,255,.18);padding:1px 5px;border-radius:4px;margin-left:5px}
+.tab.absent{opacity:.32;cursor:not-allowed;text-decoration:line-through}
+main{max-width:1000px;margin:0 auto;padding:30px 22px 90px}
+.pane{display:none}.pane.on{display:block}
+.src{color:var(--fg3);font-size:12px;margin-bottom:22px;font-family:ui-monospace,Menlo,monospace}
+h1{font-size:26px;margin:0 0 18px;color:var(--fgh);line-height:1.35}
+h2{font-size:20px;margin:38px 0 14px;padding-bottom:9px;border-bottom:1px solid var(--bd);color:var(--fgh)}
+h3{font-size:16px;margin:26px 0 10px;color:var(--fgh2)}
+h4{font-size:15px;margin:20px 0 8px;color:var(--fg2)}
+p{margin:12px 0}
+a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+code{background:var(--bg4);padding:2px 6px;border-radius:4px;font-size:.88em;color:var(--code);font-family:ui-monospace,Menlo,monospace}
+pre{background:var(--bg5);padding:14px;border-radius:8px;overflow-x:auto;border:1px solid var(--bd3)}
+pre code{background:none;padding:0;color:var(--fg)}
+blockquote{margin:16px 0;padding:12px 18px;background:var(--bg5);border-left:3px solid var(--quote-bd);color:var(--fg2);border-radius:0 7px 7px 0}
+blockquote p{margin:7px 0}
+.tw{position:relative;margin:18px 0}
+.tw::after{content:"";position:absolute;top:0;right:0;width:26px;height:100%;
+  background:linear-gradient(90deg,rgba(var(--fade),0),rgba(var(--fade),.92));pointer-events:none;opacity:0;transition:opacity .2s}
+.tw.more::after{opacity:1}
+.tw>div{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{border:1px solid var(--bd3);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:var(--bg4);color:var(--fgh2);font-weight:600;white-space:nowrap}
+tr:nth-child(even) td{background:var(--stripe)}
+strong{color:var(--fgh)}
+ul,ol{padding-left:24px;margin:12px 0}li{margin:5px 0}
+hr{border:0;border-top:1px solid var(--bd);margin:34px 0}
+em{color:var(--fg2)}
+.arch td.d{white-space:nowrap;font-family:ui-monospace,Menlo,monospace}
+.arch .chip{margin:1px 4px 1px 0;white-space:nowrap}
+.arch td{padding:6px 10px}
+.arch td.d{width:1%}
+.arch .new{margin-left:6px;padding:1px 6px}
+@media (max-width:640px){
+  .arch .chip{font-size:11px;padding:1px 6px;margin-right:3px}
+  .arch td{padding:6px 7px}
+  .arch .new{font-size:10px;padding:1px 5px}
+}
+.chip{display:inline-block;padding:1px 8px;border-radius:5px;font-size:12px;margin-right:5px;border:1px solid var(--bd2);background:var(--bg3);color:var(--fg2)}
+.chip.has{background:var(--chip-bg);border-color:var(--chip-bd);color:var(--chip-fg)}
+.chip.draft{background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-fg)}
+.status{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
+.status.alert{padding:7px 10px;border-radius:7px;background:var(--alert-bg);border:1px solid var(--alert-bd)}
+.st{font-size:12px;padding:2px 9px;border-radius:5px;border:1px solid var(--bd2);background:var(--bg3);color:var(--fg3)}
+.st.ok{color:var(--ok-fg);border-color:var(--ok-bd)}
+.st.bad{color:var(--bad-fg);border-color:var(--bad-bd);background:var(--bad-bg);font-weight:600}
+.st.warn{color:var(--warn-fg);border-color:var(--warn-bd)}
+.st.pend{opacity:.5}
+footer.dis{margin-top:48px;padding-top:16px;border-top:1px solid var(--bd);
+  color:var(--fg3);font-size:12px;line-height:1.85}
+footer.dis a{color:var(--fg2);text-decoration:underline}
+.arch tr.mh td{background:var(--bg4);color:var(--fgh2);font-weight:600;
+  font-family:ui-monospace,Menlo,monospace;padding:7px 11px;position:sticky;top:0}
+.arch tr.mh span{font-weight:400;color:var(--fg3);font-size:12px}
+.new{margin-left:8px;font-size:11px;font-weight:600;vertical-align:2px;
+  padding:2px 7px;border-radius:5px;background:var(--chip-bg);border:1px solid var(--chip-bd);color:var(--chip-fg)}
+
+@media (max-width:640px){
+  header{padding:10px 12px}
+  .bar{gap:8px;margin-bottom:9px}
+  h1.site{font-size:15px;width:100%}
+  h1.site span{display:block;margin:2px 0 0;font-size:11px}
+  .nav{margin-left:0;width:100%;gap:6px}
+  .nav a,.nav span.dis,.nav select,.nav button.tg{flex:1;text-align:center;padding:9px 6px;font-size:13px;min-height:38px;
+    white-space:nowrap;display:flex;align-items:center;justify-content:center}
+  .nav select{flex:1.4 1 0;min-width:0}
+  .nav a.all,.nav button.tg{flex:0 0 auto;padding:9px 12px}
+  .tabs{gap:5px}
+  .tab{flex:1 1 auto;padding:9px 8px;font-size:13px;min-height:38px}
+  .tab em{display:none}
+  main{padding:20px 12px 60px;padding-bottom:calc(60px + env(safe-area-inset-bottom))}
+  .src{font-size:11px;margin-bottom:16px}
+  h1{font-size:21px}
+  h2{font-size:17px;margin:28px 0 12px}
+  h3{font-size:15px;margin:20px 0 8px}
+  table{font-size:12px}
+  th,td{padding:6px 8px}
+  blockquote{padding:10px 12px;margin:14px 0}
+  pre{padding:10px;font-size:12px}
+  ul,ol{padding-left:20px}
+  .status{gap:5px}
+  .st{font-size:11px;padding:2px 7px}
+}
+@media (max-width:380px){
+  .tab{flex:1 1 calc(50% - 3px);font-size:12px;padding:9px 5px}
+  .nav a,.nav span.dis{padding:9px 4px;font-size:12px}
+  .nav a.all,.nav button.tg{padding:9px 9px}
+  table{font-size:11px}
+  th,td{padding:5px 6px}
+  main{padding:16px 10px 56px}
+}
+"""
+
+JS = """
+document.querySelectorAll('.tab:not(.absent)').forEach(function(b){
+  b.onclick=function(){
+    document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('on')});
+    document.querySelectorAll('.pane').forEach(function(x){x.classList.remove('on')});
+    b.classList.add('on');
+    document.getElementById('p-'+b.dataset.t).classList.add('on');
+    history.replaceState(null,'','#'+b.dataset.t);
+    window.scrollTo(0,0);
+  };
+});
+(function(){
+  var h=location.hash.slice(1);
+  if(h){var t=document.querySelector('.tab[data-t="'+h+'"]:not(.absent)'); if(t)t.click();}
+})();
+var sel=document.getElementById('daysel');
+if(sel) sel.onchange=function(){
+  if(!this.value) return;                          // 停在占位项时不跳
+  if(this.value==='@archive'){location.href='archive.html';return;}
+  location.href=this.value+'.html'+location.hash;
+};
+
+function go(dir){
+  var el=document.getElementById(dir>0?'nextday':'prevday');
+  if(el&&el.href) location.href=el.href;
+}
+// 桌面：左右方向键换天
+document.onkeydown=function(e){
+  if(e.target.tagName==='SELECT'||e.metaKey||e.ctrlKey) return;
+  if(e.key==='ArrowLeft') go(-1);
+  if(e.key==='ArrowRight') go(1);
+};
+// 手机：横向滑动换天。起点在可横向滚动的表格里时不接管，否则会和看表冲突。
+(function(){
+  var x0=null,y0=null,lock=false;
+  addEventListener('touchstart',function(e){
+    var t=e.touches[0]; x0=t.clientX; y0=t.clientY;
+    lock=!!e.target.closest('.tw');
+  },{passive:true});
+  addEventListener('touchend',function(e){
+    if(x0===null||lock) return;
+    var t=e.changedTouches[0], dx=t.clientX-x0, dy=t.clientY-y0;
+    if(Math.abs(dx)>70 && Math.abs(dx)>Math.abs(dy)*2) go(dx<0?1:-1);
+    x0=null;
+  },{passive:true});
+})();
+// 深浅色切换：未手动选过就跟随系统，选过之后记住
+(function(){
+  var tg=document.getElementById('theme');
+  function sysLight(){return matchMedia('(prefers-color-scheme:light)').matches}
+  function now(){return document.documentElement.dataset.theme || (sysLight()?'light':'dark')}
+  function paint(){if(tg) tg.textContent = now()==='light' ? '☾' : '☀'}
+  paint();
+  if(tg) tg.onclick=function(){
+    var next = now()==='light' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = next;
+    try{localStorage.setItem('theme',next)}catch(e){}
+    paint();
+  };
+  // 没手动选过时，系统切换要跟着变
+  matchMedia('(prefers-color-scheme:light)').addEventListener('change',function(){
+    if(!document.documentElement.dataset.theme) paint();
+  });
+})();
+// 表格还能继续横向滚时才显示右缘渐变
+(function(){
+  function sync(w){var d=w.firstElementChild;
+    w.classList.toggle('more', d.scrollWidth-d.clientWidth-d.scrollLeft>4);}
+  document.querySelectorAll('.tw').forEach(function(w){
+    sync(w); w.firstElementChild.addEventListener('scroll',function(){sync(w)},{passive:true});
+  });
+  addEventListener('resize',function(){document.querySelectorAll('.tw').forEach(sync)});
+})();
+"""
+
+def task_status():
+    """读调度器状态，渲染成状态条。无人值守的东西必须把失败摆在看得见的地方——
+    只写进日志等于没有告警。"""
+    try:
+        st = json.load(open(os.path.join(ROOT, 'state', 'scheduler.json')))
+    except (OSError, ValueError):
+        return ''          # 没跑过调度器时没有这个文件，属正常；其他异常照常抛出
+    today = datetime.date.today().isoformat()
+    mark = {'ok': ('ok', '✓'), 'failed': ('bad', '✘'),
+            'retrying': ('warn', '…'), 'skipped': ('warn', '⊘')}
+    chips, bad = [], False
+    for key, label in (('ai', 'AI'), ('douban', '豆瓣'), ('trending', 'Trending'), ('momoyu', '摸摸鱼')):
+        r = st.get(key) or {}
+        if r.get('date') == today:
+            cls, ico = mark.get(r.get('status'), ('pend', '·'))
+            if r.get('status') in ('failed', 'skipped'):
+                bad = True
+        else:
+            cls, ico = 'pend', '·'
+        chips.append('<span class="st %s">%s %s</span>' % (cls, ico, label))
+    return '<div class="status%s">%s</div>' % (' alert' if bad else '', ''.join(chips))
+
+
+def find(rdir, pats):
+    hits = [f for pat in pats for f in glob.glob(os.path.join(rdir, pat))]
+    return max(hits, key=os.path.getmtime) if hits else None
+
+# ---------- 收集所有有报告的日期 ----------
+days = sorted(d for d in os.listdir(REPORTS) if re.fullmatch(r'\d{4}-\d{2}-\d{2}', d)) \
+       if os.path.isdir(REPORTS) else []
+if not days:
+    sys.exit('reports/ 下没有找到任何 YYYY-MM-DD 目录')
+
+RECENT = 14     # 下拉里直接列出的天数，其余走归档页
+
+def _conf(key, default=''):
+    """读 bin/config.conf 的一项（与 run_task.sh / scheduler.py 共用同一份）。"""
+    try:
+        for line in open(os.path.join(ROOT, 'bin', 'config.conf')):
+            line = line.split('#', 1)[0].strip()
+            if line.startswith(key + '='):
+                return line.split('=', 1)[1].strip().strip('\'"')
+    except OSError:
+        pass
+    return default
+
+CONTACT  = _conf('CONTACT')     # 留空则只显示声明、不显示联系方式
+SITE_URL = _conf('SITE_URL').rstrip('/')   # 对外地址；留空则不生成 feed（feed 里的链接必须是绝对地址）
+FEED_MAX = 20                   # feed 里保留多少篇。单篇渲染后平均 17KB，20 篇约 340KB
+DISCLAIMER = (
+    '本站内容由程序自动采集公开信息源，交由 AI 自主分析生成，仅供个人学习与研究使用，'
+    '不代表任何机构立场。文中引用的标题、摘要、简介等材料版权归原作者或原平台所有；'
+    '分析与评述部分为 AI 自主分析，可能存在错误或偏差，请以原始来源为准。'
+    + ('如认为内容侵犯了您的权益，请联系 <a href="mailto:%s">%s</a>，核实后立即删除。'
+       % (CONTACT, CONTACT) if CONTACT else '如认为内容侵犯了您的权益，请与本站联系，核实后立即删除。')
+)
+
+HEAD_JS = ('<script>try{var t=localStorage.getItem("theme");'
+           'if(t)document.documentElement.dataset.theme=t}catch(e){}</script>')
+FEED_LINK = ('<link rel="alternate" type="application/atom+xml" title="每日简报" href="feed.xml">'
+             if SITE_URL else '')
+md = markdown.Markdown(extensions=['tables', 'fenced_code', 'attr_list'])
+STATUS = task_status()
+built_at = datetime.datetime.now().strftime('%m-%d %H:%M')
+index_of = {d: i for i, d in enumerate(days)}
+summary = {}
+
+def nav_html(day):
+    i = index_of[day]
+    prev = ('<a id="prevday" href="%s.html">‹ %s</a>' % (days[i-1], days[i-1][5:])) if i > 0 \
+           else '<span class="dis">‹ 最早</span>'
+    nxt = ('<a id="nextday" href="%s.html">%s ›</a>' % (days[i+1], days[i+1][5:])) if i < len(days)-1 \
+          else '<span class="dis">最新 ›</span>'
+    # 当前日期已经在标题里了，下拉只作跳转用，默认不落在任何一天上——
+    # 预选某天会让人以为「我选了这天」，而不是「这是最新的一天」。
+    #
+    # 只列近 RECENT 天：攒上几个月后扁平列表会有上百项，桌面端拉成一长条、
+    # iOS 上是个滚不完的滚轮。长尾交给归档页，那本来就是为列日期设计的。
+    recent = list(reversed(days))[:RECENT]
+    if day not in recent:                 # 当前在更早的日子，把它并进来免得下拉里没有
+        recent.append(day)
+    opts = '<option value="" selected>跳到日期…</option>' + ''.join(
+        '<option value="%s">%s%s</option>' % (d, d, '（最新）' if d == days[-1] else '')
+        for d in recent)
+    if len(days) > len(recent):
+        opts += '<option value="@archive">更多历史（共 %d 天）…</option>' % len(days)
+    return ('<div class="nav">%s<select id="daysel">%s</select>%s'
+            '<a class="all" href="archive.html">全部 %d 天</a>'
+            '<button class="tg" id="theme" title="切换深浅色">☀</button></div>'
+            % (prev, opts, nxt, len(days)))
+
+# ---------- 逐日渲染 ----------
+feed_pool = []          # (日期, 面板键, 标题, 生成时刻, 正文HTML)
+
+for day in days:
+    rdir = os.path.join(REPORTS, day)
+    tabs, panes, have, entries = [], [], [], []
+    for key, label, pats in PANELS:
+        f = find(rdir, pats)
+        if not f:
+            tabs.append('<button class="tab absent" data-t="%s" title="当天无此报告">%s</button>'
+                        % (key, label))
+            continue
+        draft = '_draft' in os.path.basename(f)
+        have.append((key, label, 'draft' if draft else 'has'))
+        md.reset()
+        body = md.convert(open(f, encoding='utf-8').read())
+        # 宽表在窄屏只能横向滚，包一层容器才能加滚动提示
+        body = body.replace('<table>', '<div class="tw"><div><table>').replace('</table>', '</table></div></div>')
+        tabs.append('<button class="tab%s" data-t="%s">%s%s</button>' % (
+            ' on' if not panes else '', key, label, ' <em>草稿</em>' if draft else ''))
+        panes.append('<section class="pane%s" id="p-%s"><div class="src">%s</div>%s</section>' % (
+            '' if panes else ' on', key, H.escape(os.path.relpath(f, ROOT)), body))
+        entries.append((day, key, label, os.path.getmtime(f), body))
+    summary[day] = have
+    feed_pool.extend(entries)
+    doc = ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+           '<meta name="viewport" content="width=device-width,initial-scale=1">'
+           '<title>每日简报 %s</title>%s%s<style>%s</style></head><body>'
+           '<header><div class="bar"><h1 class="site">每日简报 · %s%s</h1>%s</div>'
+           '<div class="tabs">%s</div>%s</header><main>%s'
+           '<footer class="dis">%s</footer></main><script>%s</script></body></html>'
+           % (day, HEAD_JS, FEED_LINK, CSS, day,
+              '<b class="new">最新</b>' if day == days[-1] else '',
+              nav_html(day), ''.join(tabs),
+              STATUS if day == days[-1] else '',
+              ''.join(panes) or '<p>当天没有任何报告。</p>', DISCLAIMER, JS))
+    open(os.path.join(SITE, day + '.html'), 'w', encoding='utf-8').write(doc)
+
+# ---------- index = 最新一天 ----------
+newest = days[-1]
+open(os.path.join(SITE, 'index.html'), 'w', encoding='utf-8').write(
+    open(os.path.join(SITE, newest + '.html'), encoding='utf-8').read())
+
+# ---------- 归档总览 ----------
+rows, cur_month = [], None
+for d in reversed(days):
+    m = d[:7]
+    if m != cur_month:                    # 按月分段，天数一多才扫得动
+        cur_month = m
+        n = sum(1 for x in days if x[:7] == m)
+        rows.append('<tr class="mh"><td colspan="2">%s　<span>%d 天</span></td></tr>' % (m, n))
+    chips = ''
+    for key, label, _ in PANELS:
+        st = dict((k, s) for k, _l, s in summary[d]).get(key)
+        cls = 'chip has' if st == 'has' else ('chip draft' if st == 'draft' else 'chip')
+        chips += '<span class="%s">%s%s</span>' % (cls, SHORT[key], '·草稿' if st == 'draft' else '')
+    # 月份已在分组表头里，行内只显示月-日，省下的宽度让报告 chip 收进一行
+    rows.append('<tr><td class="d"><a href="%s.html">%s</a>%s</td><td>%s</td></tr>'
+                % (d, d[5:], '<b class="new">最新</b>' if d == days[-1] else '', chips))
+open(os.path.join(SITE, 'archive.html'), 'w', encoding='utf-8').write(
+    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    '<title>历史简报</title>%s%s<style>%s</style></head><body>'
+    '<header><div class="bar"><h1 class="site">历史简报 · 共 %d 天</h1>'
+    '<div class="nav"><a href="index.html">回到最新 (%s) ›</a>'
+    '<button class="tg" id="theme" title="切换深浅色">☀</button></div></div></header>'
+    '<main><table class="arch"><tr><th>日期</th><th>报告</th></tr>%s</table>'
+    '<footer class="dis">%s</footer></main><script>%s</script></body></html>'
+    % (HEAD_JS, FEED_LINK, CSS, len(days), newest, ''.join(rows), DISCLAIMER, JS))
+
+# ---------- Atom feed ----------
+# 一篇报告一条，比整天打包一条更实用——订阅者可能只关心其中一路。
+# 没配 SITE_URL 就不生成：feed 里的链接必须是绝对地址，拼不出来的 feed 是坏的。
+if SITE_URL:
+    def t(x):
+        return datetime.datetime.fromtimestamp(x, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    items = sorted(feed_pool, key=lambda e: e[3], reverse=True)[:FEED_MAX]
+    parts = ['<?xml version="1.0" encoding="utf-8"?>',
+             '<feed xmlns="http://www.w3.org/2005/Atom">',
+             '<title>每日简报</title>',
+             '<subtitle>AI 新闻 · GitHub Trending · 摸摸鱼热榜 · 豆瓣电影</subtitle>',
+             '<id>%s/</id>' % SITE_URL,
+             '<link rel="alternate" type="text/html" href="%s/"/>' % SITE_URL,
+             '<link rel="self" type="application/atom+xml" href="%s/feed.xml"/>' % SITE_URL,
+             '<updated>%s</updated>' % t(items[0][3] if items else time.time()),
+             '<generator uri="%s">newsdesk</generator>' % SITE_URL]
+    if CONTACT:
+        parts.append('<author><name>newsdesk</name><email>%s</email></author>' % H.escape(CONTACT))
+    for day, key, label, mtime, body in items:
+        url = '%s/%s.html#%s' % (SITE_URL, day, key)
+        parts += ['<entry>',
+                  '<title>%s · %s</title>' % (H.escape(label), day),
+                  '<id>%s</id>' % url,              # 稳定不变，否则阅读器会重复推送
+                  '<link rel="alternate" type="text/html" href="%s"/>' % url,
+                  '<updated>%s</updated>' % t(mtime),
+                  '<published>%s</published>' % t(mtime),
+                  '<category term="%s"/>' % key,
+                  # 用 CDATA 而不是转义：转义会把每个 < 变成 &lt;，正文体积近乎翻倍。
+                  # CDATA 内部只有 ]]> 需要处理，拆成两段即可。
+                  '<content type="html"><![CDATA[%s]]></content>'
+                  % body.replace(']]>', ']]]]><![CDATA[>'),
+                  '</entry>']
+    parts.append('</feed>')
+    open(os.path.join(SITE, 'feed.xml'), 'w', encoding='utf-8').write('\n'.join(parts))
+    print('  site/feed.xml  (%d 条，%.0f KB)'
+          % (len(items), os.path.getsize(os.path.join(SITE, 'feed.xml')) / 1024))
+else:
+    print('  未配 SITE_URL，跳过 feed')
+
+print('已重建 %d 天：%s … %s' % (len(days), days[0], newest))
+print('  site/index.html  -> %s' % newest)
+print('  site/archive.html')

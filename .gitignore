@@ -1,0 +1,27 @@
+# 仓库只放代码：bin/ · prompts/ · README.md
+# 以下全部本地保留，不进版本控制
+
+# 采集数据与报告产物
+data/
+reports/
+site/
+attic/
+
+# 运行时
+logs/
+state/
+
+# Python
+.venv/
+__pycache__/
+
+# macOS
+.DS_Store
+
+# 运行时生成的沙箱配置与渲染后的权限文件
+state/sandbox.sb
+state/agent-settings.json
+
+# 环境特有配置：提交的是 *.example.* 模板，真实值留本地
+bin/config.conf
+deploy/wrangler.toml
