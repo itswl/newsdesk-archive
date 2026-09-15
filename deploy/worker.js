@@ -53,7 +53,9 @@ export default {
       name.endsWith('.xml')  ? 'application/atom+xml; charset=utf-8' :
       name.endsWith('.json') ? 'application/json; charset=utf-8' :
                                'text/html; charset=utf-8');
-    h.set('cache-control', `public, max-age=60, s-maxage=${ttl}`);
+    // 客户端缓存不能比边缘长，否则给 status.json 设的短 TTL 被浏览器/监控端
+    // 的 max-age 抵消掉——监控看到的永远是一分钟前的健康状态。
+    h.set('cache-control', `public, max-age=${Math.min(60, ttl)}, s-maxage=${ttl}`);
     h.set('x-content-type-options', 'nosniff');
     h.set('referrer-policy', 'no-referrer');
     h.delete('x-amz-version-id');          // 别把对象存储的内部标识透出去
