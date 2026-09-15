@@ -47,6 +47,21 @@ for src in trending momoyu douban ainews; do
   up "$BACKUP_BUCKET" "$ROOT/data/$src/$DATE" "data/$src/$DATE/"
 done
 
+# state/ 也要备：调度器的「今天哪些跑过」状态在这里，不带上的话换机器恢复后
+# 当天的任务会全部重跑一遍（浪费一整个用量窗口），而且 fetched-*.ok 标记丢了
+# 连采集都会重来。以前漏掉它，恢复步骤只能靠一句「手动带过去」。
+# 只挑需要的，不整目录传：sandbox.sb 与 agent-settings.json 是按本机路径渲染的，
+# 换机器必须重新生成，带过去反而是错的。
+if [ -d "$ROOT/state" ]; then
+  tmp="$ROOT/state/.backup"; rm -rf "$tmp"; mkdir -p "$tmp"
+  for f in scheduler.json health.json; do
+    [ -f "$ROOT/state/$f" ] && cp "$ROOT/state/$f" "$tmp/"
+  done
+  cp "$ROOT"/state/fetched-*.ok "$tmp/" 2>/dev/null
+  up "$BACKUP_BUCKET" "$tmp" "state/"
+  rm -rf "$tmp"
+fi
+
 # 公开发布：只传 site/，桶是 ObjectReadWithoutList——能按 URL 取文件，
 # 但列不出清单。注意对象存储没有「默认文档」概念，桶根路径不会自动返回
 # index.html，链接必须写到 /o/index.html。
