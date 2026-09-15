@@ -13,7 +13,8 @@
 """
 import sys, os, glob, re, json, time, datetime, html as H
 import markdown
-
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from render import sanitize, cdata   # 渲染后清洗与 CDATA，见 bin/render.py
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE = os.path.join(ROOT, 'site')
 REPORTS = os.path.join(ROOT, 'reports')
@@ -388,6 +389,7 @@ HEAD_JS = ('<script>try{var t=localStorage.getItem("theme");'
 FEED_LINK = ('<link rel="alternate" type="application/atom+xml" title="每日简报" href="feed.xml">'
              if SITE_URL else '')
 md = markdown.Markdown(extensions=['tables', 'fenced_code', 'attr_list'])
+
 STATUS = task_status()
 built_at = datetime.datetime.now().strftime('%m-%d %H:%M')
 index_of = {d: i for i, d in enumerate(days)}
@@ -433,7 +435,7 @@ for day in days:
         draft = '_draft' in os.path.basename(f)
         have.append((key, label, 'draft' if draft else 'has'))
         md.reset()
-        body = md.convert(open(f, encoding='utf-8').read())
+        body = sanitize(md.convert(open(f, encoding='utf-8').read()))
         # 宽表在窄屏只能横向滚，包一层容器才能加滚动提示
         body = body.replace('<table>', '<div class="tw"><div><table>').replace('</table>', '</table></div></div>')
         tabs.append('<button class="tab%s" data-t="%s"%s>%s%s</button>' % (
@@ -518,10 +520,8 @@ if SITE_URL:
                   '<updated>%s</updated>' % t(mtime),
                   '<published>%s</published>' % t(mtime),
                   '<category term="%s"/>' % key,
-                  # 用 CDATA 而不是转义：转义会把每个 < 变成 &lt;，正文体积近乎翻倍。
-                  # CDATA 内部只有 ]]> 需要处理，拆成两段即可。
-                  '<content type="html"><![CDATA[%s]]></content>'
-                  % body.replace(']]>', ']]]]><![CDATA[>'),
+                  # CDATA 的细节（为什么不转义、]]> 怎么拆）见 bin/render.py:cdata
+                  '<content type="html">%s</content>' % cdata(body),
                   '</entry>']
     parts.append('</feed>')
     open(os.path.join(SITE, 'feed.xml'), 'w', encoding='utf-8').write('\n'.join(parts))

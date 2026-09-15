@@ -1,0 +1,5 @@
+# 装在项目内 .venv：系统 Python 受 PEP 668 保护
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+markdown        # 报告 Markdown -> HTML
+nh3             # 渲染后 HTML 清洗。缺失时 build_site.py 直接拒绝运行，
+                # 见 bin/render.py —— 报告正文含第三方文本，不清洗等于存储型 XSS
