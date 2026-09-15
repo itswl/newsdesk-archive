@@ -26,3 +26,7 @@ state/agent-settings.json
 bin/config.conf
 deploy/wrangler.toml
 bin/sandbox-paths.local.sh
+# wrangler 本地产物：.dev.vars 放本地测试用的 webhook 等凭据，
+# .wrangler/ 是它自己的缓存。两者都不该进版本控制。
+deploy/.dev.vars
+deploy/.wrangler/
