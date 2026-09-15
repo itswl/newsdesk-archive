@@ -79,7 +79,11 @@ html[data-theme=light]{
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
   font:15px/1.75 -apple-system,"PingFang SC","Helvetica Neue",Arial,sans-serif}
-header{position:sticky;top:0;z-index:9;background:var(--bg2);border-bottom:1px solid var(--bd);padding:12px 22px}
+/* 表头随内容滚走，只留 Tab 条吸顶——Tab 是唯一高频操作，日期导航和状态条
+   看一眼就够，常驻会在手机上白占四分之一屏。 */
+header{background:var(--bg2);border-bottom:1px solid var(--bd);padding:12px 22px}
+.tabbar{position:sticky;top:0;z-index:9;background:var(--bg2);
+  border-bottom:1px solid var(--bd);padding:8px 22px}
 .bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:11px}
 h1.site{margin:0;font-size:17px;font-weight:600;color:var(--fgh);letter-spacing:.3px}
 .nav{display:flex;align-items:center;gap:5px;margin-left:auto}
@@ -90,7 +94,7 @@ h1.site{margin:0;font-size:17px;font-weight:600;color:var(--fgh);letter-spacing:
 .nav select{background:var(--bg3);color:var(--fgh2);border:1px solid var(--bd2);border-radius:6px;
   padding:5px 9px;font-size:13px;font-family:inherit;min-width:0;max-width:100%}
 .nav a.all{background:var(--bg4);color:var(--link)}
-.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;max-width:1000px;margin:0 auto}
 .tab{background:var(--bg3);color:var(--fg2);border:1px solid var(--bd2);border-radius:7px;padding:7px 15px;font-size:14px;cursor:pointer;font-family:inherit}
 .tab:hover{background:var(--bg4);color:var(--fgh2)}
 .tab.on{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -162,6 +166,7 @@ footer.dis a{color:var(--fg2);text-decoration:underline}
     white-space:nowrap;display:flex;align-items:center;justify-content:center}
   .nav select{flex:1.4 1 0;min-width:0}
   .nav a.all,.nav button.tg{flex:0 0 auto;padding:9px 12px}
+  .tabbar{padding:7px 12px}
   .tabs{gap:5px}
   .tab{flex:1 1 auto;padding:9px 8px;font-size:13px;min-height:38px}
   .tab em{display:none}
@@ -382,13 +387,14 @@ for day in days:
     doc = ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
            '<meta name="viewport" content="width=device-width,initial-scale=1">'
            '<title>每日简报 %s</title>%s%s<style>%s</style></head><body>'
-           '<header><div class="bar"><h1 class="site">每日简报 · %s%s</h1>%s</div>'
-           '<div class="tabs">%s</div>%s</header><main>%s'
+           '<header><div class="bar"><h1 class="site">每日简报 · %s%s</h1>%s</div>%s</header>'
+           '<nav class="tabbar"><div class="tabs">%s</div></nav><main>%s'
            '<footer class="dis">%s</footer></main><script>%s</script></body></html>'
            % (day, HEAD_JS, FEED_LINK, CSS, day,
               '<b class="new">最新</b>' if day == days[-1] else '',
-              nav_html(day), ''.join(tabs),
+              nav_html(day),
               STATUS if day == days[-1] else '',
+              ''.join(tabs),
               ''.join(panes) or '<p>当天没有任何报告。</p>', DISCLAIMER, JS))
     open(os.path.join(SITE, day + '.html'), 'w', encoding='utf-8').write(doc)
 
