@@ -29,48 +29,50 @@ PANELS = [
 SHORT = {'ai': 'AI', 'trending': 'Trending', 'momoyu': '摸摸鱼', 'douban': '豆瓣'}
 
 CSS = """
-/* 配色抽成变量，两套主题只差这一块。避免维护两份完整样式表然后慢慢漂移。 */
+/* 配色抽成变量，两套主题只差这一块。避免维护两份完整样式表然后慢慢漂移。
+   对比度有意压低：深色 #c9ced8/#16181d 约 9.5:1、浅色约 10:1，都远高于
+   WCAG AA 的 4.5:1，但比纯白纯黑柔和——这些报告动辄几千字，要能久看。 */
 :root{
-  --bg:#0f1115; --bg2:#151922; --bg3:#1d2330; --bg4:#1c2230; --bg5:#161b26;
-  --fg:#d7dae0; --fg2:#98a1b2; --fg3:#5d6675; --fgh:#fff; --fgh2:#b9c2d0;
-  --bd:#262c38; --bd2:#2b3342; --bd3:#2a3140;
-  --link:#5b9bff; --accent:#2f6df6; --code:#f0a868;
-  --stripe:#141926; --quote-bd:#3a4658;
-  --ok-fg:#7fd39b; --ok-bd:#2c5138;
-  --bad-fg:#ff9d9d; --bad-bd:#7a3030; --bad-bg:#2e1818;
-  --warn-fg:#d9c07a; --warn-bd:#6b5a26; --warn-bg:#3a3218;
-  --chip-fg:#9fc0f0; --chip-bg:#1b2c4d; --chip-bd:#2f4d80;
-  --alert-bg:#3a1c1c; --alert-bd:#6b2b2b;
-  --fade:15,17,21;
+  --bg:#16181d; --bg2:#1b1e25; --bg3:#232730; --bg4:#20242c; --bg5:#1a1d24;
+  --fg:#c9ced8; --fg2:#8f96a3; --fg3:#666d79; --fgh:#eef1f6; --fgh2:#aeb6c2;
+  --bd:#272b34; --bd2:#2f343e; --bd3:#262a33;
+  --link:#6ba4ff; --accent:#3b7bf0; --code:#e0a373;
+  --stripe:#1a1d23; --quote-bd:#3c4250;
+  --ok-fg:#74c894; --ok-bd:#2b4b36;
+  --bad-fg:#f09b9b; --bad-bd:#6e3131; --bad-bg:#2a1a1a;
+  --warn-fg:#d4bd7e; --warn-bd:#5f5329; --warn-bg:#2e2a1b;
+  --chip-fg:#93b8ef; --chip-bg:#1d2a41; --chip-bd:#2b4166;
+  --alert-bg:#2a1a1a; --alert-bd:#6e3131;
+  --fade:22,24,29;
   color-scheme:dark;
 }
 html[data-theme=light]{
-  --bg:#fbfbfa; --bg2:#f2f2ef; --bg3:#fff; --bg4:#f0efec; --bg5:#f5f4f1;
-  --fg:#2b2f36; --fg2:#5f6773; --fg3:#8b9199; --fgh:#14171c; --fgh2:#3b424c;
-  --bd:#e3e2de; --bd2:#d6d5d0; --bd3:#dedcd7;
-  --link:#1a5fd0; --accent:#2f6df6; --code:#a8590c;
-  --stripe:#f6f5f2; --quote-bd:#c5c7c2;
-  --ok-fg:#15803d; --ok-bd:#b3ddc1;
-  --bad-fg:#b91c1c; --bad-bd:#efb9b9; --bad-bg:#fdecec;
-  --warn-fg:#8a6108; --warn-bd:#e7d09a; --warn-bg:#fdf5e3;
-  --chip-fg:#1a4f9c; --chip-bg:#e5eefc; --chip-bd:#bcd3f5;
-  --alert-bg:#fdecec; --alert-bd:#efb9b9;
-  --fade:251,251,250;
+  --bg:#fcfcfb; --bg2:#f5f5f3; --bg3:#fff; --bg4:#f1f1ee; --bg5:#f7f7f5;
+  --fg:#3a3f47; --fg2:#6b7280; --fg3:#949aa3; --fgh:#1d2126; --fgh2:#454b54;
+  --bd:#e8e7e3; --bd2:#dcdbd6; --bd3:#e4e3df;
+  --link:#2563c7; --accent:#3b7bf0; --code:#9a5416;
+  --stripe:#faf9f7; --quote-bd:#d5d4cf;
+  --ok-fg:#1f7a45; --ok-bd:#bcdfc8;
+  --bad-fg:#c02626; --bad-bd:#f0c2c2; --bad-bg:#fdefef;
+  --warn-fg:#8a6108; --warn-bd:#e8d5a4; --warn-bg:#fdf7e8;
+  --chip-fg:#1f5aa8; --chip-bg:#eaf1fc; --chip-bd:#c6d9f5;
+  --alert-bg:#fdefef; --alert-bd:#f0c2c2;
+  --fade:252,252,251;
   color-scheme:light;
 }
 @media (prefers-color-scheme:light){
   html:not([data-theme]){
-    --bg:#fbfbfa; --bg2:#f2f2ef; --bg3:#fff; --bg4:#f0efec; --bg5:#f5f4f1;
-    --fg:#2b2f36; --fg2:#5f6773; --fg3:#8b9199; --fgh:#14171c; --fgh2:#3b424c;
-    --bd:#e3e2de; --bd2:#d6d5d0; --bd3:#dedcd7;
-    --link:#1a5fd0; --code:#a8590c;
-    --stripe:#f6f5f2; --quote-bd:#c5c7c2;
-    --ok-fg:#15803d; --ok-bd:#b3ddc1;
-    --bad-fg:#b91c1c; --bad-bd:#efb9b9; --bad-bg:#fdecec;
-    --warn-fg:#8a6108; --warn-bd:#e7d09a; --warn-bg:#fdf5e3;
-    --chip-fg:#1a4f9c; --chip-bg:#e5eefc; --chip-bd:#bcd3f5;
-    --alert-bg:#fdecec; --alert-bd:#efb9b9;
-    --fade:251,251,250;
+    --bg:#fcfcfb; --bg2:#f5f5f3; --bg3:#fff; --bg4:#f1f1ee; --bg5:#f7f7f5;
+    --fg:#3a3f47; --fg2:#6b7280; --fg3:#949aa3; --fgh:#1d2126; --fgh2:#454b54;
+    --bd:#e8e7e3; --bd2:#dcdbd6; --bd3:#e4e3df;
+    --link:#2563c7; --code:#9a5416;
+    --stripe:#faf9f7; --quote-bd:#d5d4cf;
+    --ok-fg:#1f7a45; --ok-bd:#bcdfc8;
+    --bad-fg:#c02626; --bad-bd:#f0c2c2; --bad-bg:#fdefef;
+    --warn-fg:#8a6108; --warn-bd:#e8d5a4; --warn-bg:#fdf7e8;
+    --chip-fg:#1f5aa8; --chip-bg:#eaf1fc; --chip-bd:#c6d9f5;
+    --alert-bg:#fdefef; --alert-bd:#f0c2c2;
+    --fade:252,252,251;
     color-scheme:light;
   }
 }
@@ -78,119 +80,151 @@ html[data-theme=light]{
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
-  font:15px/1.75 -apple-system,"PingFang SC","Helvetica Neue",Arial,sans-serif}
+  font:16.5px/1.9 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB",
+       "Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
+  letter-spacing:.01em;-webkit-font-smoothing:antialiased}
+
 /* 表头随内容滚走，只留 Tab 条吸顶——Tab 是唯一高频操作，日期导航和状态条
    看一眼就够，常驻会在手机上白占四分之一屏。 */
-header{background:var(--bg2);border-bottom:1px solid var(--bd);padding:12px 22px}
+header{background:var(--bg2);border-bottom:1px solid var(--bd);padding:16px 24px}
 .tabbar{position:sticky;top:0;z-index:9;background:var(--bg2);
-  border-bottom:1px solid var(--bd);padding:8px 22px}
-.bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:11px}
-h1.site{margin:0;font-size:17px;font-weight:600;color:var(--fgh);letter-spacing:.3px}
-.nav{display:flex;align-items:center;gap:5px;margin-left:auto}
-.nav a,.nav span.dis,.nav button.tg{display:inline-block;padding:5px 11px;border-radius:6px;font-size:13px;
-  border:1px solid var(--bd2);background:var(--bg3);color:var(--fg2);text-decoration:none;font-family:inherit;cursor:pointer}
+  border-bottom:1px solid var(--bd);padding:9px 24px}
+.bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  max-width:860px;margin:0 auto 10px}
+h1.site{margin:0;font-size:16px;font-weight:600;color:var(--fgh);letter-spacing:.02em}
+.nav{display:flex;align-items:center;gap:6px;margin-left:auto}
+.nav a,.nav span.dis,.nav button.tg{display:inline-block;padding:6px 12px;border-radius:7px;
+  font-size:13px;border:1px solid transparent;background:var(--bg3);color:var(--fg2);
+  text-decoration:none;font-family:inherit;cursor:pointer;transition:background .15s}
 .nav a:hover,.nav button.tg:hover{background:var(--bg4);color:var(--fgh2);text-decoration:none}
-.nav span.dis{opacity:.35}
-.nav select{background:var(--bg3);color:var(--fgh2);border:1px solid var(--bd2);border-radius:6px;
-  padding:5px 9px;font-size:13px;font-family:inherit;min-width:0;max-width:100%}
-.nav a.all{background:var(--bg4);color:var(--link)}
-.tabs{display:flex;gap:6px;flex-wrap:wrap;max-width:1000px;margin:0 auto}
-.tab{background:var(--bg3);color:var(--fg2);border:1px solid var(--bd2);border-radius:7px;padding:7px 15px;font-size:14px;cursor:pointer;font-family:inherit}
-.tab:hover{background:var(--bg4);color:var(--fgh2)}
-.tab.on{background:var(--accent);border-color:var(--accent);color:#fff}
-.tab em{font-style:normal;font-size:11px;opacity:.85;background:rgba(255,255,255,.18);padding:1px 5px;border-radius:4px;margin-left:5px}
-.tab.absent{opacity:.32;cursor:not-allowed;text-decoration:line-through}
-main{max-width:1000px;margin:0 auto;padding:30px 22px 90px}
+.nav span.dis{opacity:.4}
+.nav select{background:var(--bg3);color:var(--fg2);border:1px solid transparent;border-radius:7px;
+  padding:6px 10px;font-size:13px;font-family:inherit;min-width:0;max-width:100%}
+.nav a.all{color:var(--link)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;max-width:860px;margin:0 auto}
+.tab{background:transparent;color:var(--fg2);border:1px solid transparent;border-radius:8px;
+  padding:7px 14px;font-size:14.5px;cursor:pointer;font-family:inherit;transition:background .15s}
+.tab:hover{background:var(--bg3);color:var(--fgh2)}
+.tab.on{background:var(--accent);color:#fff}
+.tab em{font-style:normal;font-size:11px;opacity:.85;background:rgba(255,255,255,.2);
+  padding:1px 6px;border-radius:5px;margin-left:6px}
+.tab.absent{opacity:.3;cursor:not-allowed;text-decoration:line-through}
+
+/* 正文宽度 760px——中文 16.5px 下约 42 字一行。原来 1000px 是 66 字，
+   眼睛每行都要横扫一遍，长文读着累。表格允许在此基础上横向滚。 */
+main{max-width:760px;margin:0 auto;padding:44px 24px 96px}
 .pane{display:none}.pane.on{display:block}
-.src{color:var(--fg3);font-size:12px;margin-bottom:22px;font-family:ui-monospace,Menlo,monospace}
-h1{font-size:26px;margin:0 0 18px;color:var(--fgh);line-height:1.35}
-h2{font-size:20px;margin:38px 0 14px;padding-bottom:9px;border-bottom:1px solid var(--bd);color:var(--fgh)}
-h3{font-size:16px;margin:26px 0 10px;color:var(--fgh2)}
-h4{font-size:15px;margin:20px 0 8px;color:var(--fg2)}
-p{margin:12px 0}
-a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
-code{background:var(--bg4);padding:2px 6px;border-radius:4px;font-size:.88em;color:var(--code);font-family:ui-monospace,Menlo,monospace}
-pre{background:var(--bg5);padding:14px;border-radius:8px;overflow-x:auto;border:1px solid var(--bd3)}
-pre code{background:none;padding:0;color:var(--fg)}
-blockquote{margin:16px 0;padding:12px 18px;background:var(--bg5);border-left:3px solid var(--quote-bd);color:var(--fg2);border-radius:0 7px 7px 0}
-blockquote p{margin:7px 0}
-.tw{position:relative;margin:18px 0}
-.tw::after{content:"";position:absolute;top:0;right:0;width:26px;height:100%;
-  background:linear-gradient(90deg,rgba(var(--fade),0),rgba(var(--fade),.92));pointer-events:none;opacity:0;transition:opacity .2s}
+.src{color:var(--fg3);font-size:12px;margin-bottom:34px;font-family:ui-monospace,Menlo,monospace}
+
+h1{font-size:27px;line-height:1.45;margin:0 0 26px;color:var(--fgh);font-weight:650;letter-spacing:0}
+h2{font-size:20px;line-height:1.5;margin:52px 0 16px;color:var(--fgh);font-weight:650;letter-spacing:0}
+h3{font-size:17px;line-height:1.6;margin:34px 0 10px;color:var(--fgh2);font-weight:600}
+h4{font-size:16px;margin:26px 0 8px;color:var(--fg2);font-weight:600}
+p{margin:17px 0}
+a{color:var(--link);text-decoration:none;border-bottom:1px solid transparent;transition:border-color .15s}
+a:hover{border-bottom-color:var(--link);text-decoration:none}
+
+/* 行内代码不再给方框，只用色相区分——满屏小方块是视觉噪声的主要来源 */
+code{font-size:.9em;color:var(--code);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  letter-spacing:0;word-break:break-word}
+pre{background:var(--bg5);padding:16px 18px;border-radius:10px;overflow-x:auto;
+  border:1px solid var(--bd3);font-size:13.5px;line-height:1.7}
+pre code{color:var(--fg)}
+
+/* 引用块去掉背景与圆角，只留一道竖线——它在报告里承担「口径说明」，
+   不该比正文更抢眼 */
+blockquote{margin:24px 0;padding:2px 0 2px 20px;border-left:2px solid var(--quote-bd);
+  color:var(--fg2);font-size:15.5px}
+blockquote p{margin:9px 0}
+
+.tw{position:relative;margin:28px 0}
+.tw::after{content:"";position:absolute;top:0;right:0;width:28px;height:100%;
+  background:linear-gradient(90deg,rgba(var(--fade),0),rgba(var(--fade),.95));
+  pointer-events:none;opacity:0;transition:opacity .2s}
 .tw.more::after{opacity:1}
 .tw>div{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{border-collapse:collapse;width:100%;font-size:13.5px}
-th,td{border:1px solid var(--bd3);padding:8px 11px;text-align:left;vertical-align:top}
-th{background:var(--bg4);color:var(--fgh2);font-weight:600;white-space:nowrap}
-tr:nth-child(even) td{background:var(--stripe)}
-strong{color:var(--fgh)}
-ul,ol{padding-left:24px;margin:12px 0}li{margin:5px 0}
-hr{border:0;border-top:1px solid var(--bd);margin:34px 0}
-em{color:var(--fg2)}
+/* 表格只留横线，去掉竖线和单元格边框——报告表格很密，四边框会让整块变成网格噪声 */
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.65}
+th,td{border:0;border-bottom:1px solid var(--bd3);padding:10px 14px 10px 0;
+  text-align:left;vertical-align:top}
+th{color:var(--fg2);font-weight:600;white-space:nowrap;font-size:13px;
+  letter-spacing:.03em;border-bottom:1px solid var(--bd2)}
+tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--stripe)}
+
+strong{color:var(--fgh);font-weight:650}
+ul,ol{padding-left:22px;margin:17px 0}
+li{margin:8px 0}
+li::marker{color:var(--fg3)}
+hr{border:0;border-top:1px solid var(--bd);margin:44px 0}
+em{color:var(--fg2);font-style:normal}
+
 .arch td.d{white-space:nowrap;font-family:ui-monospace,Menlo,monospace}
-.arch .chip{margin:1px 4px 1px 0;white-space:nowrap}
-.arch td{padding:6px 10px}
+.arch tr.mh td{background:var(--bg4);color:var(--fgh2);font-weight:600;
+  font-family:ui-monospace,Menlo,monospace;padding:8px 12px;position:sticky;top:0}
+.arch tr.mh span{font-weight:400;color:var(--fg3);font-size:12px}
+.arch .chip{margin:1px 5px 1px 0;white-space:nowrap}
+.arch td{padding:8px 10px}
 .arch td.d{width:1%}
 .arch .new{margin-left:6px;padding:1px 6px}
-@media (max-width:640px){
-  .arch .chip{font-size:11px;padding:1px 6px;margin-right:3px}
-  .arch td{padding:6px 7px}
-  .arch .new{font-size:10px;padding:1px 5px}
-}
-.chip{display:inline-block;padding:1px 8px;border-radius:5px;font-size:12px;margin-right:5px;border:1px solid var(--bd2);background:var(--bg3);color:var(--fg2)}
-.chip.has{background:var(--chip-bg);border-color:var(--chip-bd);color:var(--chip-fg)}
-.chip.draft{background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-fg)}
-.status{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
-.status.alert{padding:7px 10px;border-radius:7px;background:var(--alert-bg);border:1px solid var(--alert-bd)}
-.st{font-size:12px;padding:2px 9px;border-radius:5px;border:1px solid var(--bd2);background:var(--bg3);color:var(--fg3)}
+.chip{display:inline-block;padding:2px 9px;border-radius:6px;font-size:12px;margin-right:5px;
+  border:1px solid var(--bd2);background:transparent;color:var(--fg3)}
+.chip.has{background:var(--chip-bg);border-color:transparent;color:var(--chip-fg)}
+.chip.draft{background:var(--warn-bg);border-color:transparent;color:var(--warn-fg)}
+.new{margin-left:9px;font-size:11px;font-weight:600;vertical-align:2px;
+  padding:2px 8px;border-radius:6px;background:var(--chip-bg);color:var(--chip-fg)}
+.status{display:flex;gap:7px;flex-wrap:wrap;max-width:860px;margin:0 auto}
+.status.alert{padding:8px 11px;border-radius:8px;background:var(--alert-bg);
+  border:1px solid var(--alert-bd)}
+.st{font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--bd2);
+  background:transparent;color:var(--fg3)}
+.st[title]{cursor:help}
 .st.ok{color:var(--ok-fg);border-color:var(--ok-bd)}
 .st.bad{color:var(--bad-fg);border-color:var(--bad-bd);background:var(--bad-bg);font-weight:600}
 .st.warn{color:var(--warn-fg);border-color:var(--warn-bd)}
-.st.pend{opacity:.5}
-.st[title]{cursor:help}
-footer.dis{margin-top:48px;padding-top:16px;border-top:1px solid var(--bd);
-  color:var(--fg3);font-size:12px;line-height:1.85}
-footer.dis a{color:var(--fg2);text-decoration:underline}
-.arch tr.mh td{background:var(--bg4);color:var(--fgh2);font-weight:600;
-  font-family:ui-monospace,Menlo,monospace;padding:7px 11px;position:sticky;top:0}
-.arch tr.mh span{font-weight:400;color:var(--fg3);font-size:12px}
-.new{margin-left:8px;font-size:11px;font-weight:600;vertical-align:2px;
-  padding:2px 7px;border-radius:5px;background:var(--chip-bg);border:1px solid var(--chip-bd);color:var(--chip-fg)}
+.st.pend{opacity:.55}
+footer.dis{margin-top:72px;padding-top:22px;border-top:1px solid var(--bd);
+  color:var(--fg3);font-size:12.5px;line-height:1.95}
+footer.dis a{color:var(--fg2);border-bottom:1px solid var(--bd2)}
 
 @media (max-width:640px){
-  header{padding:10px 12px}
-  .bar{gap:8px;margin-bottom:9px}
-  h1.site{font-size:15px;width:100%}
+  body{font-size:16px;line-height:1.85}
+  header{padding:12px 16px}
+  .tabbar{padding:8px 16px}
+  .bar{gap:9px;margin-bottom:9px}
+  h1.site{font-size:14.5px;width:100%}
   h1.site span{display:block;margin:2px 0 0;font-size:11px}
   .nav{margin-left:0;width:100%;gap:6px}
-  .nav a,.nav span.dis,.nav select,.nav button.tg{flex:1;text-align:center;padding:9px 6px;font-size:13px;min-height:38px;
-    white-space:nowrap;display:flex;align-items:center;justify-content:center}
+  .nav a,.nav span.dis,.nav select,.nav button.tg{flex:1;text-align:center;padding:9px 6px;
+    font-size:13px;min-height:38px;white-space:nowrap;display:flex;align-items:center;
+    justify-content:center}
   .nav select{flex:1.4 1 0;min-width:0}
   .nav a.all,.nav button.tg{flex:0 0 auto;padding:9px 12px}
-  .tabbar{padding:7px 12px}
-  .tabs{gap:5px}
-  .tab{flex:1 1 auto;padding:9px 8px;font-size:13px;min-height:38px}
+  .tabs{gap:4px}
+  .tab{flex:1 1 auto;padding:9px 8px;font-size:13.5px;min-height:38px}
   .tab em{display:none}
-  main{padding:20px 12px 60px;padding-bottom:calc(60px + env(safe-area-inset-bottom))}
-  .src{font-size:11px;margin-bottom:16px}
-  h1{font-size:21px}
-  h2{font-size:17px;margin:28px 0 12px}
-  h3{font-size:15px;margin:20px 0 8px}
-  table{font-size:12px}
-  th,td{padding:6px 8px}
-  blockquote{padding:10px 12px;margin:14px 0}
-  pre{padding:10px;font-size:12px}
-  ul,ol{padding-left:20px}
+  main{padding:28px 16px 64px;padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+  .src{font-size:11px;margin-bottom:24px}
+  h1{font-size:22px;margin-bottom:20px}
+  h2{font-size:18px;margin:38px 0 13px}
+  h3{font-size:16px;margin:26px 0 9px}
+  p{margin:15px 0}
+  table{font-size:13px}
+  th,td{padding:8px 10px 8px 0}
+  blockquote{margin:20px 0;padding-left:15px;font-size:15px}
+  pre{padding:12px;font-size:12.5px}
+  ul,ol{padding-left:19px}
   .status{gap:5px}
-  .st{font-size:11px;padding:2px 7px}
+  .st{font-size:11px;padding:2px 8px}
+  footer.dis{margin-top:52px;font-size:12px}
 }
 @media (max-width:380px){
-  .tab{flex:1 1 calc(50% - 3px);font-size:12px;padding:9px 5px}
+  .tab{flex:1 1 calc(50% - 2px);font-size:13px;padding:9px 5px}
   .nav a,.nav span.dis{padding:9px 4px;font-size:12px}
   .nav a.all,.nav button.tg{padding:9px 9px}
-  table{font-size:11px}
-  th,td{padding:5px 6px}
-  main{padding:16px 10px 56px}
+  table{font-size:12px}
+  th,td{padding:7px 8px 7px 0}
+  main{padding:22px 14px 56px}
 }
 """
 
