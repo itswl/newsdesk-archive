@@ -86,12 +86,54 @@ RETRIES = 2            # 失败重试次数
 RETRY_GAP_MIN = 10     # 重试间隔（分钟）
 TICK = 30              # 轮询间隔（秒）
 
-# 用量配额相关的报错特征。命中时单独告警——它意味着上面的窗口假设失效了，
-# 而不是普通的任务失败。宁可多报也不要漏：漏掉它就会一直以为「偶尔失败」。
+# ── 重试帮不上忙的三类失败 ────────────────────────────────────────────
+# 共同点：等 RETRY_GAP_MIN 分钟再来一次必然还是失败，重试只是白烧调用、
+# 还把告警推迟。但处置提示不一样，所以分开认，告警里能给出该做的事。
+#
+# 订阅配额：窗口没重置。等窗口，或换引擎。
 QUOTA_PATTERNS = re.compile(
     r'usage limit|rate.?limit|quota|too many requests|429|'
     r'5-hour|five.hour|limit reached|overloaded|capacity',
     re.I)
+# 余额/欠费：按量付费那边没钱了。这是 ENGINE_FALLBACK=api 特有的失败方式，
+# 以前会被当成普通失败——重试两次、然后报一句「失败了」，不告诉你要去充值。
+BALANCE_PATTERNS = re.compile(
+    r'insufficient\s*(?:balance|funds|credit|quota)|payment required|'
+    r'billing|arrears|余额不足|额度不足|欠费|请充值|http[^\n]{0,12}402',
+    re.I)
+# 凭据失效：key 过期、被撤销、写错。重试到天亮也没用，必须人去换。
+AUTH_PATTERNS = re.compile(
+    r'invalid[\s_-]*(?:api[\s_-]*key|token|credential)|'
+    r'(?:api[\s_-]*key|token)[^\n]{0,20}(?:expired|invalid|revoked|not found)|'
+    r'unauthorized|authentication\s*(?:failed|error)|permission denied by|'
+    r'密钥无效|认证失败|http[^\n]{0,12}401',
+    re.I)
+
+
+def classify(tail):
+    """失败属于哪一类。返回 'balance' | 'auth' | 'quota' | 'other'。
+
+    顺序有讲究：余额与凭据的报错里常常也带 quota / limit 字样，先认更具体的那个，
+    否则「余额不足」会被报成「配额耗尽」，提示你去等窗口重置——等到天亮也不会好。
+    """
+    t = tail or ''
+    if BALANCE_PATTERNS.search(t):
+        return 'balance'
+    if AUTH_PATTERNS.search(t):
+        return 'auth'
+    if QUOTA_PATTERNS.search(t):
+        return 'quota'
+    return 'other'
+
+
+# 告警里给出该做的事，不要只说「失败了」
+KIND_HINT = {
+    'quota':   ('配额耗尽', '主引擎的用量窗口还没重置。等窗口，或把 ENGINE 换成额度更宽的那个。'),
+    'balance': ('余额不足', '按量付费那边没钱了或触发了计费限制。去供应商后台充值/提额，'
+                            '这个靠等是不会好的。'),
+    'auth':    ('凭据失效', 'key 过期、被撤销或写错了。检查 config.conf 里的 '
+                            'FALLBACK_AUTH_TOKEN，重试帮不上忙。'),
+}
 
 _stop = False
 
@@ -102,7 +144,7 @@ def next_action(ok, tail, attempts, fallback_available):
     抽成纯函数是为了能测：tick() 里要起子进程、读写状态，测不动，而这里的判断
     恰好是「错了也不报错、只是白烧配额」的那类。
 
-    返回 'ok' | 'fallback' | 'give_up_quota' | 'retry' | 'give_up'
+    返回 'ok' | 'fallback' | 'give_up_hard' | 'retry' | 'give_up'
 
     ⚠️ 配额错误不能按普通失败重试。用量窗口是 USAGE_WINDOW_HOURS 小时，
     RETRY_GAP_MIN 分钟之后窗口根本没重置，重试必然再失败——白白多烧两次调用、
@@ -111,8 +153,8 @@ def next_action(ok, tail, attempts, fallback_available):
     """
     if ok:
         return 'ok'
-    if QUOTA_PATTERNS.search(tail or ''):
-        return 'fallback' if fallback_available else 'give_up_quota'
+    if classify(tail) != 'other':
+        return 'fallback' if fallback_available else 'give_up_hard'
     if attempts > RETRIES:
         return 'give_up'
     return 'retry'
@@ -247,15 +289,19 @@ def tick(state):
         fallback_ok = bool(FALLBACK_ENGINE) and FALLBACK_ENGINE != ENGINE
         act = next_action(ok, tail, attempts, fallback_ok)
 
+        kind = classify(tail) if not ok else 'other'
+        first_kind, first_engine = kind, used
         if act == 'fallback':
-            log('⚠ %s 命中配额限制（%s）——换备用引擎 %s 重跑。'
-                '不做 %d 分钟后重试：用量窗口 %.1f 小时，那时窗口还没重置。'
-                % (task, used, FALLBACK_ENGINE, RETRY_GAP_MIN, USAGE_WINDOW_HOURS))
+            label = KIND_HINT[kind][0]
+            log('⚠ %s 在 %s 上遇到「%s」——换备用引擎 %s 重跑。'
+                '不做 %d 分钟后重试：这一类等多久都不会自己好。'
+                % (task, used, label, FALLBACK_ENGINE, RETRY_GAP_MIN))
             used = FALLBACK_ENGINE
             ok, tail = run_task(task, used)
             attempts += 1
-            # 备用引擎也倒了就别再折腾了，两边都没额度不是等一会儿能解决的
-            act = 'ok' if ok else ('give_up_quota' if QUOTA_PATTERNS.search(tail or '')
+            kind = classify(tail) if not ok else 'other'
+            # 备用引擎也倒了就别再折腾了——这三类等一会儿都不会好
+            act = 'ok' if ok else ('give_up_hard' if kind != 'other'
                                    else ('give_up' if attempts > RETRIES else 'retry'))
 
         if act == 'ok':
@@ -271,26 +317,25 @@ def tick(state):
                        % (ENGINE, used, used))
             state[task] = {'date': today, 'status': 'ok', 'attempts': attempts, 'engine': used,
                            'finished': datetime.datetime.now().isoformat(timespec='seconds')}
-        elif act == 'give_up_quota':
-            log('✘ %s 配额耗尽，今日这一档放弃（重试帮不上忙，窗口 %.1f 小时才重置）'
-                % (task, USAGE_WINDOW_HOURS))
-            notify('⚠️ newsdesk %s 配额耗尽' % task,
-                   '引擎 %s 报配额限制，%s。\n'
-                   '已跳过今天这一档——用量窗口 %.1f 小时，重试等不到重置。\n'
-                   '下一档会在新窗口里正常触发。\n\n'
-                   '想减少这种情况：config.conf 里设 ENGINE_FALLBACK（用另一个供应商兜底），'
-                   '或把 ENGINE 换成额度更宽的那个。\n\n%s'
-                   % (used,
-                      '备用引擎 %s 也报了配额' % FALLBACK_ENGINE if fallback_ok else '未配置备用引擎',
-                      USAGE_WINDOW_HOURS, (tail or '')[-300:]))
+        elif act == 'give_up_hard':
+            label, hint = KIND_HINT[kind]
+            log('✘ %s 遇到「%s」，今日这一档放弃（重试帮不上忙）' % (task, label))
+            tried = ('主引擎 %s 报「%s」，备用 %s 报「%s」。'
+                     % (first_engine, KIND_HINT[first_kind][0], used, label)) \
+                if used != ENGINE else ('引擎 %s 报「%s」，%s。'
+                                        % (used, label,
+                                           '未配置备用引擎' if not fallback_ok else '备用引擎未启用'))
+            notify('⚠️ newsdesk %s %s' % (task, label),
+                   '%s\n已跳过今天这一档，下一档照常触发。\n\n'
+                   '该做的事：%s\n\n%s' % (tried, hint, (tail or '')[-300:]))
             state[task] = {'date': today, 'status': 'failed', 'attempts': attempts,
-                           'quota': True, 'engine': used, 'last_attempt_ts': time.time()}
+                           'reason': kind, 'engine': used, 'last_attempt_ts': time.time()}
         elif act == 'give_up':
             log('✘ %s 已重试 %d 次仍失败，今日放弃' % (task, RETRIES))
             notify('❌ newsdesk %s 失败' % task,
                    '重试 %d 次仍失败（引擎 %s）。\n%s' % (RETRIES, used, (tail or '')[-300:]))
             state[task] = {'date': today, 'status': 'failed', 'attempts': attempts,
-                           'quota': False, 'engine': used, 'last_attempt_ts': time.time()}
+                           'reason': 'other', 'engine': used, 'last_attempt_ts': time.time()}
         else:
             log('… %s 第 %d 次失败，%d 分钟后重试' % (task, attempts, RETRY_GAP_MIN))
             state[task] = {'date': today, 'status': 'retrying', 'attempts': attempts,
