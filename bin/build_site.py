@@ -11,14 +11,20 @@
   site/index.html          最新一天的副本
   site/archive.html        全部日期总览，标出每天有哪几份报告
 """
-import sys, os, glob, re, json, time, datetime, html as H
+import sys, os, glob, re, json, time, datetime, argparse, html as H
 import markdown
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from render import sanitize, cdata   # 渲染后清洗与 CDATA，见 bin/render.py
 from render import today_state as _today_state
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SITE = os.path.join(ROOT, 'site')
 REPORTS = os.path.join(ROOT, 'reports')
+
+_ap = argparse.ArgumentParser(description='把 reports/ 渲染成静态站')
+_ap.add_argument('--days', type=int, default=0,
+                 help='只生成最近 N 天（0 = 全部）。对外发布用它限制可见范围')
+_ap.add_argument('--out', default='site', help='输出目录，相对仓库根（默认 site）')
+_args = _ap.parse_args()
+SITE = os.path.join(ROOT, _args.out)
 os.makedirs(SITE, exist_ok=True)
 
 PANELS = [
@@ -350,6 +356,15 @@ days = sorted(d for d in os.listdir(REPORTS) if re.fullmatch(r'\d{4}-\d{2}-\d{2}
 if not days:
     sys.exit('reports/ 下没有找到任何 YYYY-MM-DD 目录')
 
+# 截断放在这里、只此一处：下面的日期下拉、上一天/下一天、归档页、feed、index
+# 全都由 days 推导，砍掉尾巴之后它们会自动一致。
+# 对外发布用 --days 限制可见范围——注意光少生成页面还不够，公开桶里已经传上去的
+# 旧页面仍然按 URL 可取（桶是 ObjectReadWithoutList，列不出但地址能猜），
+# 所以 backup_oci.sh 还要把超窗的对象删掉，见那里的 prune_public。
+_all_days = list(days)
+if _args.days > 0:
+    days = days[-_args.days:]
+
 RECENT = 14     # 下拉里直接列出的天数，其余走归档页
 
 def _conf(key, default=''):
@@ -525,7 +540,8 @@ def write_status():
     # 注意：这个文件会随 site/ 发布到公开桶，不要往里放路径、pid 之类的本机信息
     with open(os.path.join(SITE, 'status.json'), 'w', encoding='utf-8') as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
-    print('  site/status.json  (stale %s h, ok=%s)' % (stale, doc['ok']))
+    print('  %s/status.json  (stale %s h, ok=%s)'
+          % (os.path.relpath(SITE, ROOT), stale, doc['ok']))
 
 write_status()
 
@@ -572,11 +588,15 @@ if SITE_URL:
                   '</entry>']
     parts.append('</feed>')
     open(os.path.join(SITE, 'feed.xml'), 'w', encoding='utf-8').write('\n'.join(parts))
-    print('  site/feed.xml  (%d 条，%.0f KB)'
-          % (len(items), os.path.getsize(os.path.join(SITE, 'feed.xml')) / 1024))
+    print('  %s/feed.xml  (%d 条，%.0f KB)' % (os.path.relpath(SITE, ROOT),
+             len(items), os.path.getsize(os.path.join(SITE, 'feed.xml')) / 1024))
 else:
     print('  未配 SITE_URL，跳过 feed')
 
-print('已重建 %d 天：%s … %s' % (len(days), days[0], newest))
-print('  site/index.html  -> %s' % newest)
-print('  site/archive.html')
+print('已重建 %d 天：%s … %s%s' % (
+    len(days), days[0], newest,
+    '（共 %d 天，按 --days %d 截断）' % (len(_all_days), _args.days)
+    if _args.days > 0 and len(_all_days) > len(days) else ''))
+print('  输出目录: %s' % os.path.relpath(SITE, ROOT))
+print('  %s/index.html  -> %s' % (os.path.relpath(SITE, ROOT), newest))
+print('  %s/archive.html' % os.path.relpath(SITE, ROOT))

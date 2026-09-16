@@ -66,7 +66,50 @@ fi
 # 但列不出清单。注意对象存储没有「默认文档」概念，桶根路径不会自动返回
 # index.html，链接必须写到 /o/index.html。
 if [ -n "${PUBLISH_BUCKET:-}" ]; then
-  echo "发布 -> oci://$PUBLISH_BUCKET （公开只读）"
-  up "$PUBLISH_BUCKET" "$ROOT/site" ""
+  # 对外发布的是哪一份：配了 PUBLIC_DAYS 就用限窗的 site-public/，否则全量 site/
+  PUBDIR="$ROOT/site"
+  if [ "${PUBLIC_DAYS:-0}" -gt 0 ] 2>/dev/null && [ -d "$ROOT/site-public" ]; then
+    PUBDIR="$ROOT/site-public"
+    echo "发布 -> oci://$PUBLISH_BUCKET （公开只读，只放最近 $PUBLIC_DAYS 天）"
+  else
+    echo "发布 -> oci://$PUBLISH_BUCKET （公开只读，全部历史）"
+  fi
+  up "$PUBLISH_BUCKET" "$PUBDIR" ""
+
+  # 删掉超窗的旧页面。少生成页面是不够的：桶是 ObjectReadWithoutList，别人列不出
+  # 清单，但 2026-09-02.html 这种地址是能猜的，不删就等于「不给链接但仍可访问」。
+  #
+  # 三道保险，因为这是对公开桶做删除：
+  #   1. 只认 YYYY-MM-DD.html 这一种名字，index/archive/feed/status 永远不动
+  #   2. 本地那份必须真的有日期页，否则视为构建失败，一个都不删
+  #   3. 删之前逐条打印
+  prune_public() {
+    local keep n_keep
+    keep=$(find "$PUBDIR" -maxdepth 1 -name '????-??-??.html' -exec basename {} \; 2>/dev/null | sort)
+    n_keep=$(printf '%s\n' "$keep" | grep -c '^[0-9]' || true)
+    if [ "$n_keep" -eq 0 ]; then
+      echo "  !! 本地没有任何日期页，疑似构建失败，跳过清理（不动公开桶）"; return 0
+    fi
+    local remote
+    remote=$(oci os object list -ns "$NS" -bn "$PUBLISH_BUCKET" --all 2>/dev/null \
+      | python3 -c "
+import json,re,sys
+try: d=json.load(sys.stdin)['data']
+except Exception: sys.exit(0)
+for o in d:
+    if re.fullmatch(r'\d{4}-\d{2}-\d{2}\.html', o['name']): print(o['name'])
+" | sort)
+    local gone
+    gone=$(comm -13 <(printf '%s\n' "$keep") <(printf '%s\n' "$remote"))
+    [ -z "$gone" ] && { echo "  ✓ 无超窗页面需要清理（线上 $n_keep 天）"; return 0; }
+    local n=0
+    while IFS= read -r obj; do
+      [ -n "$obj" ] || continue
+      oci os object delete -ns "$NS" -bn "$PUBLISH_BUCKET" --name "$obj" --force >/dev/null 2>&1 \
+        && { echo "  − 已下线 $obj"; n=$((n+1)); } || echo "  ! 删除失败 $obj"
+    done <<< "$gone"
+    echo "  ✓ 清理完成：下线 $n 个超窗页面，线上保留 $n_keep 天"
+  }
+  prune_public
   echo "  https://objectstorage.$(oci iam region-subscription list --query 'data[0]."region-name"' --raw-output 2>/dev/null).oraclecloud.com/n/$NS/b/$PUBLISH_BUCKET/o/index.html"
 fi

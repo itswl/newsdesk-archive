@@ -126,7 +126,15 @@ case "$TASK" in
 esac
 
 echo "--- $(TS) 重建站点 ---"
-"$ROOT/.venv/bin/python" bin/build_site.py "$DATE"
+# 两份产出，边界是有意的：
+#   site/         全量历史，给本地看、给私有桶备份
+#   site-public/  只留最近 PUBLIC_DAYS 天，这份才对外发布
+# 不做成一份然后「只上传一部分」——那样页面里的日期下拉和归档页仍会链到
+# 没上传的日子，点进去 404。范围要在生成时就定下来。
+"$ROOT/.venv/bin/python" bin/build_site.py
+if [ "${PUBLIC_DAYS:-0}" -gt 0 ] 2>/dev/null; then
+  "$ROOT/.venv/bin/python" bin/build_site.py --days "$PUBLIC_DAYS" --out site-public
+fi
 
 echo "--- $(TS) 清理超期数据 ---"
 python3 bin/prune.py

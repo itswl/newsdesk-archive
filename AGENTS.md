@@ -110,3 +110,11 @@ denylist 天然会漂移，所以：机器特有的路径写进 `bin/sandbox-pat
 `bin/restore_oci.sh` 从私有桶拉回 `reports/ site/ state/ data/`。`state/` 现在也备份了——不带上的话换机器后当天任务会全部重跑一遍（浪费一整个用量窗口），`fetched-*.ok` 丢了连采集都会重来。
 
 `state/sandbox.sb` 与 `state/agent-settings.json` **有意不备份**：它们是按本机路径渲染的，换机器必须重新生成，带过去反而是错的。
+
+## 对外可见范围
+
+`PUBLIC_DAYS` 决定线上能看多少天，`build_site.py --days N --out DIR` 落实。本地 `site/` 与私有桶始终全量，限的只是对外那一份。
+
+**生成两份，不要「生成一份然后只上传一部分」。** 页面里的日期下拉、归档页、feed 都由同一个 `days` 列表推导，只上传一部分的话它们仍会链到没上传的日子，点进去 404。所以截断只在一处：`days` 算出来之后立刻按 `--days` 砍掉尾巴，下游自动一致。
+
+**光少生成页面不够，还要删。** 公开桶是 `ObjectReadWithoutList`——别人列不出清单，但 `2026-09-02.html` 这种地址是能猜的。`backup_oci.sh` 的 `prune_public` 负责下线超窗对象，否则只是「不给链接」而不是「看不到」。它对公开桶做删除，所以有三道保险：只认 `YYYY-MM-DD.html`、本地没有任何日期页就一个都不删（防构建失败误删全站）、逐条打印。改这个函数时别削掉这三条。

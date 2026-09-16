@@ -5,6 +5,8 @@
 data/
 reports/
 site/
+# 对外发布的限窗副本（只含最近 PUBLIC_DAYS 天），由 build_site --out 生成
+site-public/
 attic/
 
 # 运行时
