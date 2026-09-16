@@ -523,8 +523,11 @@ DISCLAIMER = T('dis.body') + (T('dis.contact', CONTACT, CONTACT) if CONTACT
 
 HEAD_JS = ('<script>try{var t=localStorage.getItem("theme");'
            'if(t)document.documentElement.dataset.theme=t}catch(e){}</script>')
-FEED_LINK = ('<link rel="alternate" type="application/atom+xml" title="%s" href="feed.xml">' % T('site.feed_title')
-             if SITE_URL else '')
+# feed 标题算一次，<head> 的 <link title> 与 feed 自身的 <title> 共用同一个值——
+# 两处对不上的话，阅读器订阅时显示的名字和订阅后的名字会不一样。
+FEED_TITLE = T('site.feed_title') + (' · ' + i18n.LANG_LABEL[LANG] if len(ALL_LANGS) > 1 else '')
+FEED_LINK = ('<link rel="alternate" type="application/atom+xml" title="%s" href="feed.xml">'
+             % H.escape(FEED_TITLE) if SITE_URL else '')
 
 
 def head_links(page):
@@ -538,6 +541,12 @@ def head_links(page):
     alt = ''.join('<link rel="alternate" hreflang="%s" href="%s/%s">' % (c, lang_url(c), page)
                   for c in ALL_LANGS)
     alt += '<link rel="alternate" hreflang="x-default" href="%s/%s">' % (lang_url(ROOT_LANG), page)
+    # 其他语言的 feed 也声明出来：阅读器填首页自动发现时能一次看到三份，
+    # 而不是只拿到当前语言这一份。
+    alt += ''.join(
+        '<link rel="alternate" type="application/atom+xml" hreflang="%s" title="%s" href="%s/feed.xml">'
+        % (c, H.escape(i18n.table(c)['site.feed_title'] + ' · ' + i18n.LANG_LABEL[c]), lang_url(c))
+        for c in ALL_LANGS if c != LANG)
     return FEED_LINK + alt
 md = markdown.Markdown(extensions=['tables', 'fenced_code', 'attr_list'])
 
@@ -738,7 +747,9 @@ if SITE_URL:
     items = sorted(feed_pool, key=lambda e: e[3], reverse=True)[:FEED_MAX]
     parts = ['<?xml version="1.0" encoding="utf-8"?>',
              '<feed xmlns="http://www.w3.org/2005/Atom">',
-             '<title>%s</title>' % H.escape(T('site.feed_title')),
+             # 多语言时标题带语言标识：「每日简报」和「每日簡報」在阅读器侧边栏里
+             # 只差两个字，同时订阅几乎分不出来。单语站点不加这个尾巴。见 FEED_TITLE。
+             '<title>%s</title>' % H.escape(FEED_TITLE),
              '<subtitle>%s</subtitle>' % H.escape(T('site.feed_sub')),
              '<id>%s/</id>' % BASE_URL,
              '<link rel="alternate" type="text/html" href="%s/"/>' % BASE_URL,
