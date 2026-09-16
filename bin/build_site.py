@@ -227,7 +227,30 @@ em{color:var(--fg2);font-style:normal}
 .st.bad{color:var(--bad-fg);border-color:var(--bad-bd);background:var(--bad-bg);font-weight:600}
 .st.warn{color:var(--warn-fg);border-color:var(--warn-bd)}
 .st.pend{opacity:.55}
+.st .m{font-style:normal;margin-right:5px}
 /* 语言切换：跟日期导航同一行，低调但点得到。当前语言不是链接，避免自己链自己 */
+/* ── 英文排版覆盖 ────────────────────────────────────────────────────
+   上面那套 16.5px/1.9 + .01em 字距是按中文调的：CJK 方块字需要更大的行距与
+   一点字距才透气。原样套在拉丁文字上有三个问题，实测都量过：
+
+     一行 107 字符   760px 下英文塞得进 107 个字符，中文只有 69。舒适区间是
+                     66-80，超过之后眼睛回到下一行会找不着位置。
+     行高 1.9        英文的标准区间是 1.5-1.7，1.9 会让行与行散开、段落不成块。
+     字距 .01em      拉丁字体本身已经调过字偶距，再加只会更松。
+
+   只收窄段落与列表，表格保持 760px——trending 报告有 11 列，收窄它得不偿失。
+   用 em 而不是 px：随字号自动缩放，改字号时不用重新算字符数。 */
+html[lang="en"] body{line-height:1.68;letter-spacing:normal}
+html[lang="en"] .pane p,
+html[lang="en"] .pane li,
+html[lang="en"] .pane blockquote{max-width:34em}
+html[lang="en"] h1{letter-spacing:-.01em}
+html[lang="en"] h2,html[lang="en"] h3{letter-spacing:-.005em}
+/* 状态条：英文标签更宽，四个 chip 在 375px 上要占掉 85% 的行宽。
+   收紧勾号与文字之间的空隙和左右内边距，把它压回和中文相当的比例。 */
+html[lang="en"] .st{letter-spacing:normal;padding-left:9px;padding-right:9px}
+html[lang="en"] .st .m{margin-right:3px}
+
 /* 语言切换：一个框里三段，不是三个独立按钮。除了视觉上是一个整体，也更窄——
    省掉了三份外边距与按钮之间的间隙。当前语言不是链接，避免自己链自己。 */
 .lang{display:inline-flex;align-items:stretch;margin-left:4px;
@@ -406,7 +429,8 @@ def task_status():
             tip = T('st.skipped')
         if status in ('failed', 'skipped'):
             bad = True
-        chips.append('<span class="st %s" title="%s">%s %s</span>'
+        # 标记单独包一层：英文标签更宽，需要能单独收紧标记与文字之间的空隙
+        chips.append('<span class="st %s" title="%s"><i class="m">%s</i>%s</span>'
                      % (cls, H.escape(tip), ico, SHORT[key]))
     return '<div class="status%s">%s</div>' % (' alert' if bad else '', ''.join(chips))
 
