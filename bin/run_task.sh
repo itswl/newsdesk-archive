@@ -2,7 +2,8 @@
 # 每日简报单任务执行器。
 #   用法: run_task.sh <task> [engine]
 #   task   : ai | trending | momoyu | douban
-#   engine : claude | codex   （缺省取 bin/config.conf 里的 ENGINE）
+#   engine : claude | codex | api   （缺省取 bin/config.conf 里的 ENGINE）
+#            api = claude CLI 连第三方 Anthropic 兼容端点，见 config.conf
 #
 # 三步：采集(脚本，沙箱外) → 分析(模型，沙箱内) → 发布(build_site)
 #
@@ -82,6 +83,25 @@ run_model() {
         --permission-prompts none \
         "$prompt" </dev/null
       ;;
+    api)
+      # Claude Code 连第三方 Anthropic 兼容端点（DeepSeek / 智谱等）。
+      # 用的还是 claude CLI，所以沙箱、权限文件、工具链全都一样，只换端点和模型。
+      # 存在的理由是按量付费不受订阅的 5 小时用量窗口限制，主引擎配额耗尽时还能出报告。
+      for v in FALLBACK_BASE_URL FALLBACK_AUTH_TOKEN FALLBACK_MODEL; do
+        eval "[ -n \"\${$v:-}\" ]" || { echo "!!! ENGINE=api 需要 $v，config.conf 里没配，拒绝运行"; return 1; }
+      done
+      render_settings || return 1
+      # 令牌只走环境变量传给 claude 自己，不落任何文件。
+      # ⚠️ 假设模型在沙箱里能看到这个环境变量（非交互下探不出来，按最坏情况设计）。
+      # 分析层禁网，拿不出去，但产出是要公开发布的——所以 bin/leakcheck.py 在
+      # 发布前会拦一道，见那里。
+      ANTHROPIC_BASE_URL="$FALLBACK_BASE_URL" \
+      ANTHROPIC_AUTH_TOKEN="$FALLBACK_AUTH_TOKEN" \
+      claude -p --model "$FALLBACK_MODEL" \
+        --settings "$SETTINGS" \
+        --permission-prompts none \
+        "$prompt" </dev/null
+      ;;
     codex)
       # 没有可用沙箱就拒绝：codex 自带的 workspace-write 不限制读，
       # 无外层沙箱等于无防护
@@ -93,7 +113,7 @@ run_model() {
           "$prompt" </dev/null
       ;;
     *)
-      echo "!!! 未知引擎: $ENGINE（可选 claude | codex）"; return 2 ;;
+      echo "!!! 未知引擎: $ENGINE（可选 claude | codex | api）"; return 2 ;;
   esac
   local rc=$?
   [ $rc -ne 0 ] && echo "!!! $(TS) $ENGINE 失败 (exit $rc)"
@@ -122,7 +142,7 @@ case "$TASK" in
   trending) fetch python3 bin/fetch_trending.py --tier t3;       hist trending; run_model prompts/trending.md || exit 1 ;;
   momoyu)   fetch python3 bin/fetch_momoyu.py;                   hist momoyu;   run_model prompts/momoyu.md   || exit 1 ;;
   douban)   fetch python3 bin/fetch_douban.py --tag 热门 --n 10;  hist douban;   run_model prompts/douban.md   || exit 1 ;;
-  *) echo "用法: run_task.sh <ai|trending|momoyu|douban> [claude|codex]"; exit 2 ;;
+  *) echo "用法: run_task.sh <ai|trending|momoyu|douban> [claude|codex|api]"; exit 2 ;;
 esac
 
 echo "--- $(TS) 重建站点 ---"
@@ -138,6 +158,20 @@ fi
 
 echo "--- $(TS) 清理超期数据 ---"
 python3 bin/prune.py
+
+# 发布前扫一遍产出里有没有混进凭据。
+# ENGINE=api 时令牌通过环境变量传给 claude，模型在沙箱里能不能看到这个变量，
+# 非交互下探不出来（带变量展开的探针会被权限系统拒掉），所以按最坏情况设计。
+# 沙箱禁网能挡住「把令牌发出去」，挡不住「把令牌写进报告」——而报告是要公开发布的。
+echo "--- $(TS) 发布前凭据扫描 ---"
+if ! python3 bin/leakcheck.py "$ROOT/reports" "$ROOT/site" "$ROOT/site-public"; then
+  echo "!!! 产出中发现凭据，中止发布（本地文件保留，供你核对与清理）"
+  python3 bin/alert.py "🚨 newsdesk 产出中发现凭据，已中止发布" \
+    "任务 $TASK 的产出里出现了疑似凭据，站点未发布。
+详见 logs/${DATE}_${TASK}.log。
+先确认是不是提示注入，再决定是否轮换相关凭据。" || true
+  exit 1
+fi
 
 # 备份在沙箱外跑：需要 ~/.oci 凭据，而分析层沙箱正是要拒掉那个目录
 echo "--- $(TS) 备份到对象存储 ---"

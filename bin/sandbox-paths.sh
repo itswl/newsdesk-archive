@@ -54,6 +54,18 @@ SBX_DENY_FILES=(
   "$HOME/.pypirc"
   "$HOME/.git-credentials"
   "$HOME/.claude.json"      # 与 ~/.claude 同级但不在其下，按目录拒会漏掉它
+  # ── 仓库内的凭据文件 ──
+  # 分析层要能读仓库（data/ 在里面），所以 $ROOT 整体是放行的——凭据文件必须
+  # 逐个拒掉。这几个都是分析层用不到的：run_task.sh 与 build_site.py 读它们
+  # 都在沙箱外。
+  #
+  # ⚠️ 这不是多余的谨慎：分析层是唯一接触外部不可信文本的环节（RSS 正文、
+  # 仓库描述、热榜标题），而它的产出会公开发布。一次提示注入把 config.conf
+  # 里的令牌抄进报告，就直接上线了——沙箱禁网拦不住这条路径。
+  "$ROOT/bin/config.conf"
+  "$ROOT/bin/sandbox-paths.local.sh"
+  "$ROOT/deploy/wrangler.toml"
+  "$ROOT/deploy/.dev.vars"
 )
 
 # 分析层不得改写自己的执行脚本、prompt 与 git 历史

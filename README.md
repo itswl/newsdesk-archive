@@ -102,7 +102,8 @@ API 配额），所以核心字段——星标、fork、授权、停更、年龄
 | 项 | 说明 |
 |---|---|
 | `ENGINE` / `CLAUDE_MODEL` / `CODEX_MODEL` | 默认引擎与各自的模型 |
-| `ENGINE_FALLBACK` | 主引擎配额耗尽时改用它，留空 = 不兜底。见下 |
+| `ENGINE_FALLBACK` | 配额耗尽时的兜底：`codex`（另一个订阅）/ `api`（第三方端点）/ 留空 |
+| `FALLBACK_BASE_URL` / `FALLBACK_AUTH_TOKEN` / `FALLBACK_MODEL` | `ENGINE_FALLBACK=api` 时用，见下 |
 | `GITHUB_TOKEN` | **可选**。留空走未认证预算；填 `none` 显式不认证；留空且装了 `gh` 会借用它的令牌 |
 | `BACKUP_BUCKET` / `PUBLISH_BUCKET` | 对象存储桶名，**留空即关闭备份与发布** |
 | `SITE_URL` | 对外地址，用于生成 Atom feed（feed 里必须是绝对链接），**留空即不生成** |
@@ -137,6 +138,20 @@ bin/restore_oci.sh [--days N]          # 换机器时从私有桶拉回产出
 **不走常规重试。** 用量窗口是 5 小时，`RETRY_GAP_MIN` 是 10 分钟——重试时窗口根本
 没重置，必然再失败。旧逻辑会白烧两次调用、还把告警推迟 20 分钟，而日志看起来只是
 「失败了三次」，看不出是配额问题。
+
+**推荐用按量付费的 API 兜底。** `ENGINE_FALLBACK=api` 走的仍是 Claude Code，只是换了
+端点和模型——沙箱、权限文件、工具链全都一样，只需三个变量：
+
+```
+ENGINE_FALLBACK=api
+FALLBACK_BASE_URL=https://api.deepseek.com/anthropic     # 或 https://open.bigmodel.cn/api/anthropic
+FALLBACK_AUTH_TOKEN=<你的 key>
+FALLBACK_MODEL=deepseek-flash                            # 智谱则用 glm-5.3
+```
+
+按量付费不受订阅的 5 小时窗口限制，所以主引擎额度见底时它一定还能跑。三个变量缺一个
+就拒绝运行，不会静默退回没有兜底的状态。`schedulerctl.sh status` 会显示兜底具体指向
+哪个模型和主机——「配了但指向哪儿」是最容易配错又看不出来的地方。
 
 **有 `ENGINE_FALLBACK` 就立刻换引擎。** 两个引擎走不同供应商，配额池互不相干，所以
 这是「今天还有没有报告」和「今天这份没了」的差别。切换只在命中配额特征时发生，普通
@@ -200,6 +215,15 @@ bin/test.sh            # 再加沙箱边界实测（起真的 sandbox-exec，慢
 分析层是唯一接触外部不可信文本的环节——RSS 正文、仓库描述、热榜标题都是别人能写的
 内容，每天无人值守地喂给模型。所以它跑在沙箱里：**读不到任何明文凭据，也出不了网**，
 `bin/` 与 `prompts/` 对它只读。**不使用 `--dangerously-skip-permissions`。**
+
+**发布前扫凭据。** 用 API key 兜底意味着令牌通过环境变量传给 claude，而模型在沙箱里
+能否看到这个变量，非交互下探不出来（带变量展开的探针会被权限系统拒掉），所以按最坏
+情况设计。沙箱禁网能挡住「把令牌发出去」，挡不住「把令牌写进报告」——报告第二天就在
+公开站点上了。`bin/leakcheck.py` 在发布前扫一遍 `reports/` 与 `site/`，命中即中止发布
+并告警，且只报位置不打印内容。它按配置里的真实值 + 常见凭据形状两条线查。
+
+另外 `bin/config.conf` 本身已加入沙箱拒读清单——分析层读不到它（`run_task.sh` 与
+`build_site.py` 读它都在沙箱外）。
 
 **发布前清洗 HTML。** python-markdown 默认原样放行 HTML，而报告正文里引用的是别人写的
 文本（HN 标题、仓库描述、豆瓣简介）。一条构造过的标题被原样抄进报告，就会在公开页面上

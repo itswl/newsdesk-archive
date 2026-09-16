@@ -126,3 +126,17 @@ denylist 天然会漂移，所以：机器特有的路径写进 `bin/sandbox-pat
 处置写在 `next_action()` 里（纯函数，`tick()` 起子进程测不了）：配额 + 有备用引擎 → `fallback`；配额 + 没有 → `give_up_quota`（立刻放弃当档，不重试）；普通失败照旧重试。**普通失败不切备用引擎**，那只会把两边额度一起耗掉。
 
 `ENGINE_FALLBACK` 指向另一个供应商时才有意义（claude 与 codex 配额池不同）。配之前先实测那个引擎真的能跑——一个跑不通的兜底比没有更糟，只是多烧一次调用。真发生切换会推通知：报告出来了，但主引擎额度见底是该知道的事。
+
+## 仓库内的凭据文件必须逐个拒读
+
+分析层要能读仓库（`data/` 在里面），所以 `$ROOT` 整体是放行的——凭据文件只能逐个拒。`bin/config.conf`、`bin/sandbox-paths.local.sh`、`deploy/wrangler.toml`、`deploy/.dev.vars` 都在 `SBX_DENY_FILES` 里。这不是多余的谨慎：`config.conf` 里装着告警 webhook 和兜底引擎的 API key，而分析层的产出会公开发布。
+
+**新增带凭据的文件时，同时改三处**：`sandbox-paths.sh` 的拒读清单、`leakcheck.py` 的 `SECRET_KEYS`、`.gitignore`。`tests/test_leakcheck.py` 里有一条用例会比对 `config.conf` 的实际键名与 `SECRET_KEYS`，漏了会红。
+
+## 发布前扫凭据
+
+`ENGINE_FALLBACK=api` 时令牌通过环境变量传给 claude。模型在沙箱里能否看到这个变量，非交互下探不出来——带变量展开的探针（`[ -n "$VAR" ]`）会被权限系统当作 expansion obfuscation 拒掉。所以按最坏情况设计。
+
+**沙箱禁网挡住的是「把令牌发出去」，挡不住「把令牌写进报告」**，而报告第二天就在公开站点上。`bin/leakcheck.py` 在 `run_task.sh` 里于备份与发布之前运行，命中即 `exit 1` 中止发布、推告警、保留本地文件供核对。它只报文件与行号，不打印命中内容——把凭据写进日志就自相矛盾了。
+
+写测试样本时不要用真实凭据派生的串（哪怕加了后缀、截断过）。这个仓库是公开的，测试文件本身也会被读到。用 `EXAMPLE` / `0123456789` 这类一眼假的填充。

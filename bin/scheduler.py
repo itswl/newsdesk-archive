@@ -60,6 +60,21 @@ ENGINE = _conf('ENGINE', 'claude')   # 默认分析引擎，改 bin/config.conf
 # 主引擎配额耗尽时改用它。两个引擎走的是不同供应商，配额池互不相干，
 # 所以这是「今天还能不能出报告」和「今天这份没了」的差别。留空则不兜底。
 FALLBACK_ENGINE = _conf('ENGINE_FALLBACK', '')
+
+
+def fallback_desc():
+    """备用引擎的人话描述。api 这个名字本身看不出用的是谁，
+    而「配了但指向哪儿」正是最容易配错又看不出来的地方。"""
+    if not FALLBACK_ENGINE or FALLBACK_ENGINE == ENGINE:
+        return '无（配额耗尽即跳过当档）'
+    if FALLBACK_ENGINE != 'api':
+        return FALLBACK_ENGINE
+    model = _conf('FALLBACK_MODEL', '?')
+    host = re.sub(r'^https?://([^/]+).*', r'\1', _conf('FALLBACK_BASE_URL', '?'))
+    missing = [k for k in ('FALLBACK_BASE_URL', 'FALLBACK_AUTH_TOKEN', 'FALLBACK_MODEL')
+               if not _conf(k, '')]
+    return ('api（%s @ %s）' % (model, host)) if not missing \
+        else 'api ⚠ 缺少 %s，兜底不可用' % '、'.join(missing)
 TASK_TIMEOUT_MIN = 30  # 单任务上限。超时必须有：调度器是单线程串行的，
                        # 一个卡住的模型调用会让后面所有任务再也不触发，
                        # 而且是静默死掉——日志停在「分析中」就没下文。
@@ -386,9 +401,7 @@ def main():
             print('调度器 pid=%s %s' % (pid, '运行中' if alive else '（已死，pid 文件过期）'))
         else:
             print('调度器未运行')
-        print('引擎: %s%s' % (ENGINE,
-              '  备用 %s' % FALLBACK_ENGINE if FALLBACK_ENGINE and FALLBACK_ENGINE != ENGINE
-              else '  无备用（配额耗尽即跳过当档）'))
+        print('引擎: %s   备用: %s' % (ENGINE, fallback_desc()))
         print('告警: %s' % ('已配置 ALERT_WEBHOOK'
                            if alert._conf('ALERT_WEBHOOK')
                            else '未配置——任务失败或整条停摆不会有任何通知'))
@@ -440,8 +453,7 @@ def main():
         CATCHUP_MARGIN_MIN, RETRIES, RETRY_GAP_MIN, TICK))
     log('用量窗口 %.1fh，最小间隔 %.2fh · 备用引擎 %s · 告警 %s' % (
         USAGE_WINDOW_HOURS, min(schedule_gaps()),
-        FALLBACK_ENGINE if FALLBACK_ENGINE and FALLBACK_ENGINE != ENGINE
-        else '无（配额耗尽即跳过当档）',
+        fallback_desc(),
         '已配置' if alert._conf('ALERT_WEBHOOK') else '未配置（失败不会有人知道）'))
     consecutive_errors = 0
     try:
