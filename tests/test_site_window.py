@@ -79,6 +79,28 @@ class TestWindow(unittest.TestCase):
         linked = set(re.findall(r'/(\d{4}-\d{2}-\d{2})\.html', open(feed, encoding='utf-8').read()))
         self.assertTrue(linked <= kept, 'feed 指向窗外: %s' % (linked - kept))
 
+    def test_notice_shown_only_when_windowed(self):
+        # 限窗了就要在页面上说明白，否则访客只会觉得「历史怎么没了」
+        win = open(os.path.join(self.build('--days', '3'), 'index.html'), encoding='utf-8').read()
+        self.assertIn('class="keep"', win)
+        self.assertIn('最近 3 天', win)
+        full = open(os.path.join(self.build(), 'index.html'), encoding='utf-8').read()
+        self.assertNotIn('class="keep"', full)   # 没限窗就不该有这句话
+
+    def test_archive_wording_is_not_a_lie_when_windowed(self):
+        # 「共 N 天」在限窗时读起来像「总共就这些」，而更早的只是下线了
+        win = open(os.path.join(self.build('--days', '3'), 'archive.html'), encoding='utf-8').read()
+        self.assertIn('最近 3 天', win)
+        self.assertNotIn('共 3 天', win)
+        full = open(os.path.join(self.build(), 'archive.html'), encoding='utf-8').read()
+        self.assertIn('共 %d 天' % len(all_days()), full)
+
+    def test_reports_are_never_touched(self):
+        # 限窗只影响 HTML 展示。原文必须原封不动——它是私有备份和重建的唯一来源
+        before = set(all_days())
+        self.build('--days', '1')
+        self.assertEqual(before, set(all_days()))
+
     def test_local_full_build_is_unaffected(self):
         # 限窗只针对发布；本地与私有桶备份始终全量
         self.assertGreaterEqual(len(self.pages(self.build())), len(self.pages(self.build('--days', '3'))))

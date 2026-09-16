@@ -191,6 +191,9 @@ em{color:var(--fg2);font-style:normal}
 .st.bad{color:var(--bad-fg);border-color:var(--bad-bd);background:var(--bad-bg);font-weight:600}
 .st.warn{color:var(--warn-fg);border-color:var(--warn-bd)}
 .st.pend{opacity:.55}
+.keep{margin:0 0 20px;padding:9px 13px;border-left:2px solid var(--quote-bd);
+  background:var(--bg5);color:var(--fg2);font-size:13.5px;line-height:1.7;border-radius:0 4px 4px 0}
+footer.dis .keep{margin:0 0 12px;background:none;padding:0 0 0 11px}
 footer.dis{margin-top:72px;padding-top:22px;border-top:1px solid var(--bd);
   color:var(--fg3);font-size:12.5px;line-height:1.95}
 footer.dis a{color:var(--fg2);border-bottom:1px solid var(--bd2)}
@@ -365,6 +368,12 @@ _all_days = list(days)
 if _args.days > 0:
     days = days[-_args.days:]
 
+# 限窗之后有些措辞会变成假话：归档页的「共 N 天」读起来像「总共就这些」，
+# 日期页最早那天的「‹ 最早」读起来像「没有更早的了」。实际是更早的被下线了，
+# 本地和私有桶里都还在。所以限窗时改口径，并明说保留多少天。
+WINDOWED = _args.days > 0 and len(_all_days) > len(days)
+WINDOW_NOTE = ('本站对外仅保留最近 %d 天的简报，更早的已下线。' % len(days)) if WINDOWED else ''
+
 RECENT = 14     # 下拉里直接列出的天数，其余走归档页
 
 def _conf(key, default=''):
@@ -385,6 +394,9 @@ FEED_MAX = 20                   # feed 里保留多少篇。单篇渲染后平�
 # 站点分发的内容里含第三方文本（豆瓣简介、GitHub 仓库描述、各平台热榜标题），
 # 这不只是隐私问题，也是版权与各平台 ToS 的问题：自己看是一回事，
 # 公开站点 + feed 分发是另一回事。内容维持现状，靠声明把边界说清楚。
+# 页脚提示（日期页用）。不写「完整历史在私有备份里」——那是运维侧的事，
+# 访客既拿不到也不关心，只会让人以为还有别的入口。
+NOTE_HTML = ('<p class="keep">%s</p>' % WINDOW_NOTE) if WINDOWED else ''
 DISCLAIMER = (
     '本站为个人非商业性质的信息聚合与评述项目，内容由程序自动采集公开可访问的信息源，'
     '交由 AI 自主分析生成，仅供个人学习与研究使用，不代表任何机构立场，亦不用于任何商业目的。'
@@ -412,7 +424,9 @@ summary = {}
 def nav_html(day):
     i = index_of[day]
     prev = ('<a id="prevday" href="%s.html">‹ %s</a>' % (days[i-1], days[i-1][5:])) if i > 0 \
-           else '<span class="dis">‹ 最早</span>'
+           else '<span class="dis" title="%s">%s</span>' % (
+               H.escape(WINDOW_NOTE or '这是最早的一天'),
+               '‹ 仅存 %d 天' % len(days) if WINDOWED else '‹ 最早')
     nxt = ('<a id="nextday" href="%s.html">%s ›</a>' % (days[i+1], days[i+1][5:])) if i < len(days)-1 \
           else '<span class="dis">最新 ›</span>'
     # 当前日期已经在标题里了，下拉只作跳转用，默认不落在任何一天上——
@@ -466,13 +480,13 @@ for day in days:
            '<title>每日简报 %s</title>%s%s<style>%s</style></head><body>'
            '<header><div class="bar"><h1 class="site">每日简报 · %s%s</h1>%s</div>%s</header>'
            '<nav class="tabbar"><div class="tabs">%s</div></nav><main>%s'
-           '<footer class="dis">%s</footer></main><script>%s</script></body></html>'
+           '<footer class="dis">%s%s</footer></main><script>%s</script></body></html>'
            % (day, HEAD_JS, FEED_LINK, CSS, day,
               '<b class="new">最新</b>' if day == days[-1] else '',
               nav_html(day),
               STATUS if day == days[-1] else '',
               ''.join(tabs),
-              ''.join(panes) or '<p>当天没有任何报告。</p>', DISCLAIMER, JS))
+              ''.join(panes) or '<p>当天没有任何报告。</p>', NOTE_HTML, DISCLAIMER, JS))
     open(os.path.join(SITE, day + '.html'), 'w', encoding='utf-8').write(doc)
 
 # ---------- index = 最新一天 ----------
@@ -549,12 +563,18 @@ open(os.path.join(SITE, 'archive.html'), 'w', encoding='utf-8').write(
     '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
     '<meta name="viewport" content="width=device-width,initial-scale=1">'
     '<title>历史简报</title>%s%s<style>%s</style></head><body>'
-    '<header><div class="bar"><h1 class="site">历史简报 · 共 %d 天</h1>'
+    '<header><div class="bar"><h1 class="site">历史简报 · %s %d 天</h1>'
     '<div class="nav"><a href="index.html">回到最新 (%s) ›</a>'
     '<button class="tg" id="theme" title="切换深浅色">☀</button></div></div></header>'
-    '<main><table class="arch"><tr><th>日期</th><th>报告</th></tr>%s</table>'
-    '<footer class="dis">%s</footer></main><script>%s</script></body></html>'
-    % (HEAD_JS, FEED_LINK, CSS, len(days), newest, ''.join(rows), DISCLAIMER, JS))
+    '<main>%s<table class="arch"><tr><th>日期</th><th>报告</th></tr>%s</table>'
+    '<footer class="dis">%s%s</footer></main><script>%s</script></body></html>'
+    % (HEAD_JS, FEED_LINK, CSS,
+       # 「共 N 天」在限窗时是假话——更早的只是下线了，不是不存在
+       '最近' if WINDOWED else '共', len(days), newest,
+       # 归档页是「历史都在哪」的页面，这条提示放在表格正上方最该被看到
+       ('<p class="keep">%s</p>' % WINDOW_NOTE) if WINDOWED else '',
+       # 页脚不再重复：这一页表格正上方已经有一条了
+       ''.join(rows), '', DISCLAIMER, JS))
 
 # ---------- Atom feed ----------
 # 一篇报告一条，比整天打包一条更实用——订阅者可能只关心其中一路。
