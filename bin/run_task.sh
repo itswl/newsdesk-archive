@@ -145,6 +145,15 @@ case "$TASK" in
   *) echo "用法: run_task.sh <ai|trending|momoyu|douban> [claude|codex|api]"; exit 2 ;;
 esac
 
+# 英文版正文。繁中不用翻——构建时 OpenCC 现转。
+# 翻译失败不拖垮流水线：中文站照常发布，英文那份缺一篇而已，页面会显示「当天没有这份报告」。
+case ",${SITE_LANGS:-}," in
+  *,en,*)
+    echo "--- $(TS) 翻译英文版 ---"
+    python3 bin/translate.py "$DATE" || echo "!! 翻译有失败项，英文站将缺少对应报告（中文站不受影响）"
+    ;;
+esac
+
 echo "--- $(TS) 重建站点 ---"
 # 两份产出，边界是有意的：
 #   site/         全量历史，给本地看、给私有桶备份
@@ -153,7 +162,15 @@ echo "--- $(TS) 重建站点 ---"
 # 没上传的日子，点进去 404。范围要在生成时就定下来。
 "$ROOT/.venv/bin/python" bin/build_site.py
 if [ "${PUBLIC_DAYS:-0}" -gt 0 ] 2>/dev/null; then
-  "$ROOT/.venv/bin/python" bin/build_site.py --days "$PUBLIC_DAYS" --out site-public
+  LANGS="${SITE_LANGS:-zh-CN}"
+  FIRST="${LANGS%%,*}"
+  # 默认语言放根目录，其余各占一个子目录——这样换语言时 URL 只多一段，
+  # 且根路径仍然直接可用（对象存储没有默认文档，Worker 补 index.html 也只补根那一层）
+  IFS=','; for L in $LANGS; do unset IFS
+    if [ "$L" = "$FIRST" ]; then OUT="site-public"; else OUT="site-public/$L"; fi
+    "$ROOT/.venv/bin/python" bin/build_site.py --days "$PUBLIC_DAYS" --out "$OUT" \
+      --lang "$L" --langs "$LANGS"
+  done; unset IFS
 fi
 
 echo "--- $(TS) 清理超期数据 ---"

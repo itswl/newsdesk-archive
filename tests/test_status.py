@@ -68,9 +68,10 @@ class TestArtifactWins(Base):
 class TestSchedulerFillsTheGaps(Base):
     def test_failed_shows_when_no_report(self):
         self.sched_json({'ai': {'date': TODAY, 'status': 'failed', 'attempts': 3}})
-        st, tip, _ = self.state()['ai']
+        st, _at, meta = self.state()['ai']
         self.assertEqual(st, 'failed')
-        self.assertIn('3', tip)
+        # 只回数据，不回拼好的中文——提示文字要按站点语言渲染
+        self.assertEqual(meta['attempts'], 3)
 
     def test_skipped_shows_when_no_report(self):
         self.sched_json({'momoyu': {'date': TODAY, 'status': 'skipped'}})
@@ -78,9 +79,16 @@ class TestSchedulerFillsTheGaps(Base):
 
     def test_pending_mentions_planned_time(self):
         self.sched_json({})
-        st, tip, _ = self.state()['momoyu']
+        st, _at, meta = self.state()['momoyu']
         self.assertEqual(st, 'pending')
-        self.assertIn('21:45', tip)
+        self.assertEqual(meta['planned'], '21:45')
+
+    def test_returns_data_not_localised_text(self):
+        # 在这里拼死中文的话，英文/繁中站就没法翻
+        self.report('ai-news.md')
+        for _st, at, meta in self.state().values():
+            self.assertIsInstance(meta, dict)
+            self.assertNotRegex(at or '', r'[\u4e00-\u9fff]')
 
     def test_yesterdays_record_does_not_count_as_today(self):
         self.sched_json({'ai': {'date': '2026-09-14', 'status': 'ok'}})

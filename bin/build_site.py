@@ -16,6 +16,7 @@ import markdown
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from render import sanitize, cdata   # 渲染后清洗与 CDATA，见 bin/render.py
 from render import today_state as _today_state
+import i18n
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPORTS = os.path.join(ROOT, 'reports')
 
@@ -23,18 +24,28 @@ _ap = argparse.ArgumentParser(description='把 reports/ 渲染成静态站')
 _ap.add_argument('--days', type=int, default=0,
                  help='只生成最近 N 天（0 = 全部）。对外发布用它限制可见范围')
 _ap.add_argument('--out', default='site', help='输出目录，相对仓库根（默认 site）')
+_ap.add_argument('--lang', default='zh-CN', choices=list(i18n.LANGS),
+                 help='界面与正文语言。zh-TW 由 zh-CN 现转（OpenCC），'
+                      'en 读 translate.py 预先翻好的 *.en.md')
+_ap.add_argument('--langs', default='', help='语言切换器里列出哪些（逗号分隔），留空则不显示切换器')
 _args = _ap.parse_args()
+LANG = _args.lang
+T = i18n.translator(LANG)
+# 切换器里的其他语言。只有确实会发布多语言时才显示，单语站点不该有这个控件。
+ALL_LANGS = [x.strip() for x in _args.langs.split(',') if x.strip() in i18n.LANGS]
 SITE = os.path.join(ROOT, _args.out)
 os.makedirs(SITE, exist_ok=True)
 
-PANELS = [
-    ('ai',       'AI 简报',         ['ai-news.md']),
-    ('trending', 'GitHub Trending', ['github-trending.md', 'github-trending_draft*.md']),
-    ('momoyu',   '摸摸鱼热榜',       ['momoyu.md']),
-    ('douban',   '豆瓣电影',         ['douban.md']),
-]
+# 文件名模式与语言无关：英文版是 <名字>.en.md，由 find() 按语言挑
+PATS = {
+    'ai':       ['ai-news.md'],
+    'trending': ['github-trending.md', 'github-trending_draft*.md'],
+    'momoyu':   ['momoyu.md'],
+    'douban':   ['douban.md'],
+}
+PANELS = [(k, T('panel.' + k), PATS[k]) for k in ('ai', 'trending', 'momoyu', 'douban')]
 # 归档页是扫读视图，用短标签——全名会在窄屏折成两行，几十天下来页面长一倍
-SHORT = {'ai': 'AI', 'trending': 'Trending', 'momoyu': '摸摸鱼', 'douban': '豆瓣'}
+SHORT = {k: T('short.' + k) for k in PATS}
 
 CSS = """
 /* 配色抽成变量，两套主题只差这一块。避免维护两份完整样式表然后慢慢漂移。
@@ -191,6 +202,12 @@ em{color:var(--fg2);font-style:normal}
 .st.bad{color:var(--bad-fg);border-color:var(--bad-bd);background:var(--bad-bg);font-weight:600}
 .st.warn{color:var(--warn-fg);border-color:var(--warn-bd)}
 .st.pend{opacity:.55}
+/* 语言切换：跟日期导航同一行，低调但点得到。当前语言不是链接，避免自己链自己 */
+.lang{display:inline-flex;gap:2px;align-items:center;margin-left:4px}
+.lang a,.lang span{padding:4px 7px;border-radius:5px;font-size:12.5px;line-height:1;
+  color:var(--fg3);white-space:nowrap}
+.lang a:hover{background:var(--bg3);color:var(--fg)}
+.lang span.on{color:var(--fgh);background:var(--bg3)}
 .keep{margin:0 0 20px;padding:9px 13px;border-left:2px solid var(--quote-bd);
   background:var(--bg5);color:var(--fg2);font-size:13.5px;line-height:1.7;border-radius:0 4px 4px 0}
 footer.dis .keep{margin:0 0 12px;background:none;padding:0 0 0 11px}
@@ -232,6 +249,8 @@ footer.dis a{color:var(--fg2);border-bottom:1px solid var(--bd2)}
 @media (max-width:380px){
   .tab{flex:1 1 calc(50% - 2px);font-size:13px;padding:9px 5px}
   .nav a,.nav span.dis{padding:9px 4px;font-size:12px}
+  .lang{margin-left:0}
+  .lang a,.lang span{padding:5px 5px;font-size:11.5px}
   .nav a.all,.nav button.tg{padding:9px 9px}
   table{font-size:12px}
   th,td{padding:7px 8px 7px 0}
@@ -328,28 +347,49 @@ def _schedule():
 
 
 def today_state():
+    # 固定看简中原文：状态条表达的是「任务今天跑没跑」，
+    # 不是「翻译完没完」——英文版缺翻译不该显示成任务没跑
     return _today_state(REPORTS, os.path.join(ROOT, 'state', 'scheduler.json'),
-                        PANELS, _schedule(), find=find)
+                        PANELS, _schedule(),
+                        find=lambda rdir, pats: find(rdir, pats, 'zh-CN'))
 
 
 def task_status():
     """把 today_state() 渲染成状态条。无人值守的东西必须把失败摆在看得见的地方——
-    只写进日志等于没有告警。每个 chip 带 title 说明，光靠颜色说不清。"""
+    只写进日志等于没有告警。每个 chip 带 title 说明，光靠颜色说不清。
+
+    提示文字在这里按站点语言组句：today_state() 只回数据，不回中文。
+    """
     state = today_state()
     mark = {'ok': ('ok', '✓'), 'draft': ('warn', '✎'), 'failed': ('bad', '✘'),
             'retrying': ('warn', '…'), 'skipped': ('warn', '⊘'), 'pending': ('pend', '·')}
     chips, bad = [], False
-    for key, label in (('ai', 'AI'), ('douban', '豆瓣'), ('trending', 'Trending'), ('momoyu', '摸摸鱼')):
-        status, tip, _ = state[key]
+    for key, _label, _pats in PANELS:
+        status, at, meta = state[key]
         cls, ico = mark.get(status, ('pend', '·'))
+        if status in ('ok', 'draft'):
+            tip = T('st.' + status, at)
+        elif status in ('failed', 'retrying'):
+            tip = T('st.' + status, meta.get('attempts', '?'))
+        elif status == 'pending':
+            tip = T('st.pending') + (T('st.planned', meta['planned']) if meta.get('planned') else '')
+        else:
+            tip = T('st.skipped')
         if status in ('failed', 'skipped'):
             bad = True
         chips.append('<span class="st %s" title="%s">%s %s</span>'
-                     % (cls, H.escape(tip), ico, label))
+                     % (cls, H.escape(tip), ico, SHORT[key]))
     return '<div class="status%s">%s</div>' % (' alert' if bad else '', ''.join(chips))
 
 
-def find(rdir, pats):
+def find(rdir, pats, lang=None):
+    """挑出某一份报告的文件。
+
+    英文是 translate.py 预先翻好的独立文件 <名字>.en.md；
+    繁中没有独立文件——用简中原文在渲染时现转（见 i18n.convert_body）。
+    """
+    if (lang or LANG) == 'en':
+        pats = [p[:-3] + '.en.md' for p in pats]
     hits = [f for pat in pats for f in glob.glob(os.path.join(rdir, pat))]
     return max(hits, key=os.path.getmtime) if hits else None
 
@@ -372,7 +412,7 @@ if _args.days > 0:
 # 日期页最早那天的「‹ 最早」读起来像「没有更早的了」。实际是更早的被下线了，
 # 本地和私有桶里都还在。所以限窗时改口径，并明说保留多少天。
 WINDOWED = _args.days > 0 and len(_all_days) > len(days)
-WINDOW_NOTE = ('本站对外仅保留最近 %d 天的简报，更早的已下线。' % len(days)) if WINDOWED else ''
+WINDOW_NOTE = T('keep.note', len(days)) if WINDOWED else ''
 
 RECENT = 14     # 下拉里直接列出的天数，其余走归档页
 
@@ -403,22 +443,12 @@ FEED_MAX = _args.days * len(PANELS) if _args.days > 0 else 20
 # 页脚提示（日期页用）。不写「完整历史在私有备份里」——那是运维侧的事，
 # 访客既拿不到也不关心，只会让人以为还有别的入口。
 NOTE_HTML = ('<p class="keep">%s</p>' % WINDOW_NOTE) if WINDOWED else ''
-DISCLAIMER = (
-    '本站为个人非商业性质的信息聚合与评述项目，内容由程序自动采集公开可访问的信息源，'
-    '交由 AI 自主分析生成，仅供个人学习与研究使用，不代表任何机构立场，亦不用于任何商业目的。'
-    '文中引用的标题、摘要、简介、仓库描述等材料，著作权均归原作者或原平台所有，'
-    '本站仅作必要引用以支撑评述，并在各处标注来源、保留原文链接，'
-    '不主张对这些材料的任何权利，也不鼓励脱离原始出处传播。'
-    '分析与评述部分为 AI 自主分析，可能存在错误、遗漏或偏差，一切以原始来源为准。'
-    + ('如您是权利人并认为本站内容侵犯了您的权益，或希望移除对某一来源的引用，'
-       '请联系 <a href="mailto:%s">%s</a>，核实后立即删除，无需其他前置程序。'
-       % (CONTACT, CONTACT) if CONTACT else
-       '如您是权利人并认为本站内容侵犯了您的权益，请与本站联系，核实后立即删除。')
-)
+DISCLAIMER = T('dis.body') + (T('dis.contact', CONTACT, CONTACT) if CONTACT
+                              else T('dis.contact_none'))
 
 HEAD_JS = ('<script>try{var t=localStorage.getItem("theme");'
            'if(t)document.documentElement.dataset.theme=t}catch(e){}</script>')
-FEED_LINK = ('<link rel="alternate" type="application/atom+xml" title="每日简报" href="feed.xml">'
+FEED_LINK = ('<link rel="alternate" type="application/atom+xml" title="%s" href="feed.xml">' % T('site.feed_title')
              if SITE_URL else '')
 md = markdown.Markdown(extensions=['tables', 'fenced_code', 'attr_list'])
 
@@ -427,14 +457,33 @@ built_at = datetime.datetime.now().strftime('%m-%d %H:%M')
 index_of = {d: i for i, d in enumerate(days)}
 summary = {}
 
+def lang_switch(page):
+    """语言切换器。只在确实发布多语言时出现——单语站点不该有这个控件。
+
+    链接是相对的：简中在根目录、其余在 /<lang>/ 下，所以从子目录切回根要 ../。
+    每天一页，切换时停在同一天（各语言的文件名一致）。
+    """
+    if len(ALL_LANGS) < 2:
+        return ''
+    items = []
+    for code in ALL_LANGS:
+        here = code == LANG
+        # 目标语言的相对前缀：当前在子目录就先退一层
+        up = '' if LANG == 'zh-CN' else '../'
+        href = up + ('' if code == 'zh-CN' else code + '/')
+        items.append('<span class="on">%s</span>' % i18n.LANG_LABEL[code] if here
+                     else '<a href="%s%s">%s</a>' % (href, page, i18n.LANG_LABEL[code]))
+    return '<span class="lang" title="%s">%s</span>' % (H.escape(T('nav.lang')), ''.join(items))
+
+
 def nav_html(day):
     i = index_of[day]
     prev = ('<a id="prevday" href="%s.html">‹ %s</a>' % (days[i-1], days[i-1][5:])) if i > 0 \
            else '<span class="dis" title="%s">%s</span>' % (
-               H.escape(WINDOW_NOTE or '这是最早的一天'),
-               '‹ 仅存 %d 天' % len(days) if WINDOWED else '‹ 最早')
+               H.escape(WINDOW_NOTE or T('nav.oldest_tip')),
+               T('nav.window_end', len(days)) if WINDOWED else T('nav.oldest_end'))
     nxt = ('<a id="nextday" href="%s.html">%s ›</a>' % (days[i+1], days[i+1][5:])) if i < len(days)-1 \
-          else '<span class="dis">最新 ›</span>'
+          else '<span class="dis">%s</span>' % T('nav.newest_end')
     # 当前日期已经在标题里了，下拉只作跳转用，默认不落在任何一天上——
     # 预选某天会让人以为「我选了这天」，而不是「这是最新的一天」。
     #
@@ -443,15 +492,16 @@ def nav_html(day):
     recent = list(reversed(days))[:RECENT]
     if day not in recent:                 # 当前在更早的日子，把它并进来免得下拉里没有
         recent.append(day)
-    opts = '<option value="" selected>跳到日期…</option>' + ''.join(
-        '<option value="%s">%s%s</option>' % (d, d, '（最新）' if d == days[-1] else '')
+    opts = '<option value="" selected>%s</option>' % T('nav.jump') + ''.join(
+        '<option value="%s">%s%s</option>' % (d, d, T('nav.newest_mark') if d == days[-1] else '')
         for d in recent)
     if len(days) > len(recent):
-        opts += '<option value="@archive">更多历史（共 %d 天）…</option>' % len(days)
+        opts += '<option value="@archive">%s</option>' % T('nav.more', len(days))
     return ('<div class="nav">%s<select id="daysel">%s</select>%s'
-            '<a class="all" href="archive.html">全部 %d 天</a>'
-            '<button class="tg" id="theme" title="切换深浅色">☀</button></div>'
-            % (prev, opts, nxt, len(days)))
+            '<a class="all" href="archive.html">%s</a>%s'
+            '<button class="tg" id="theme" title="%s">☀</button></div>'
+            % (prev, opts, nxt, T('nav.all', len(days)), lang_switch(day + '.html'),
+               H.escape(T('nav.theme'))))
 
 # ---------- 逐日渲染 ----------
 feed_pool = []          # (日期, 面板键, 标题, 生成时刻, 正文HTML)
@@ -462,37 +512,39 @@ for day in days:
     for key, label, pats in PANELS:
         f = find(rdir, pats)
         if not f:
-            tabs.append('<button class="tab absent" data-t="%s" '
-                        'title="当天没有这份报告——任务没跑，或者跑了但失败了">%s</button>'
-                        % (key, label))
+            tabs.append('<button class="tab absent" data-t="%s" title="%s">%s</button>'
+                        % (key, H.escape(T('tab.absent')), label))
             continue
         draft = '_draft' in os.path.basename(f)
         have.append((key, label, 'draft' if draft else 'has'))
         md.reset()
-        body = sanitize(md.convert(open(f, encoding='utf-8').read()))
+        raw = i18n.convert_body(open(f, encoding='utf-8').read(), LANG)
+        body = sanitize(md.convert(raw))
         # 宽表在窄屏只能横向滚，包一层容器才能加滚动提示
         body = body.replace('<table>', '<div class="tw"><div><table>').replace('</table>', '</table></div></div>')
         tabs.append('<button class="tab%s" data-t="%s"%s>%s%s</button>' % (
             ' on' if not panes else '', key,
-            ' title="这是草稿版本：当天的正式版还没生成，正式版出来后会取代它"' if draft else '',
-            label, ' <em title="草稿版本，非最终稿">草稿</em>' if draft else ''))
+            ' title="%s"' % H.escape(T('tab.draft_tip')) if draft else '',
+            label, ' <em title="%s">%s</em>' % (H.escape(T('tab.draft_title')), T('tab.draft_badge'))
+            if draft else ''))
         panes.append('<section class="pane%s" id="p-%s"><div class="src">%s</div>%s</section>' % (
             '' if panes else ' on', key, H.escape(os.path.relpath(f, ROOT)), body))
         entries.append((day, key, label, os.path.getmtime(f), body))
     summary[day] = have
     feed_pool.extend(entries)
-    doc = ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+    doc = ('<!doctype html><html lang="%s"><head><meta charset="utf-8">'
            '<meta name="viewport" content="width=device-width,initial-scale=1">'
-           '<title>每日简报 %s</title>%s%s<style>%s</style></head><body>'
-           '<header><div class="bar"><h1 class="site">每日简报 · %s%s</h1>%s</div>%s</header>'
+           '<title>%s %s</title>%s%s<style>%s</style></head><body>'
+           '<header><div class="bar"><h1 class="site">%s · %s%s</h1>%s</div>%s</header>'
            '<nav class="tabbar"><div class="tabs">%s</div></nav><main>%s'
            '<footer class="dis">%s%s</footer></main><script>%s</script></body></html>'
-           % (day, HEAD_JS, FEED_LINK, CSS, day,
-              '<b class="new">最新</b>' if day == days[-1] else '',
+           % (i18n.HTML_LANG[LANG], T('site.name'), day, HEAD_JS, FEED_LINK, CSS,
+              T('site.name'), day,
+              '<b class="new">%s</b>' % T('site.latest') if day == days[-1] else '',
               nav_html(day),
               STATUS if day == days[-1] else '',
               ''.join(tabs),
-              ''.join(panes) or '<p>当天没有任何报告。</p>', NOTE_HTML, DISCLAIMER, JS))
+              ''.join(panes) or '<p>%s</p>' % T('site.none_today'), NOTE_HTML, DISCLAIMER, JS))
     open(os.path.join(SITE, day + '.html'), 'w', encoding='utf-8').write(doc)
 
 # ---------- index = 最新一天 ----------
@@ -512,7 +564,7 @@ for d in reversed(days):
     for key, label, _ in PANELS:
         st = dict((k, s) for k, _l, s in summary[d]).get(key)
         cls = 'chip has' if st == 'has' else ('chip draft' if st == 'draft' else 'chip')
-        chips += '<span class="%s">%s%s</span>' % (cls, SHORT[key], '·草稿' if st == 'draft' else '')
+        chips += '<span class="%s">%s%s</span>' % (cls, SHORT[key], T('tab.draft_mark') if st == 'draft' else '')
     # 月份已在分组表头里，行内只显示月-日，省下的宽度让报告 chip 收进一行
     rows.append('<tr><td class="d"><a href="%s.html">%s</a>%s</td><td>%s</td></tr>'
                 % (d, d[5:], '<b class="new">最新</b>' if d == days[-1] else '', chips))
@@ -566,21 +618,22 @@ def write_status():
 write_status()
 
 open(os.path.join(SITE, 'archive.html'), 'w', encoding='utf-8').write(
-    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+    '<!doctype html><html lang="%s"><head><meta charset="utf-8">'
     '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    '<title>历史简报</title>%s%s<style>%s</style></head><body>'
-    '<header><div class="bar"><h1 class="site">历史简报 · %s %d 天</h1>'
-    '<div class="nav"><a href="index.html">回到最新 (%s) ›</a>'
-    '<button class="tg" id="theme" title="切换深浅色">☀</button></div></div></header>'
-    '<main>%s<table class="arch"><tr><th>日期</th><th>报告</th></tr>%s</table>'
+    '<title>%s</title>%s%s<style>%s</style></head><body>'
+    '<header><div class="bar"><h1 class="site">%s · %s %s</h1>'
+    '<div class="nav"><a href="index.html">%s</a>%s'
+    '<button class="tg" id="theme" title="%s">☀</button></div></div></header>'
+    '<main>%s<table class="arch"><tr><th>%s</th><th>%s</th></tr>%s</table>'
     '<footer class="dis">%s%s</footer></main><script>%s</script></body></html>'
-    % (HEAD_JS, FEED_LINK, CSS,
+    % (i18n.HTML_LANG[LANG], T('site.archive'), HEAD_JS, FEED_LINK, CSS, T('site.archive'),
        # 「共 N 天」在限窗时是假话——更早的只是下线了，不是不存在
-       '最近' if WINDOWED else '共', len(days), newest,
+       T('arch.recent') if WINDOWED else T('arch.total'), T('arch.days', len(days)),
+       T('nav.back', newest), lang_switch('archive.html'), H.escape(T('nav.theme')),
        # 归档页是「历史都在哪」的页面，这条提示放在表格正上方最该被看到
        ('<p class="keep">%s</p>' % WINDOW_NOTE) if WINDOWED else '',
        # 页脚不再重复：这一页表格正上方已经有一条了
-       ''.join(rows), '', DISCLAIMER, JS))
+       T('arch.date'), T('arch.reports'), ''.join(rows), '', DISCLAIMER, JS))
 
 # ---------- Atom feed ----------
 # 一篇报告一条，比整天打包一条更实用——订阅者可能只关心其中一路。
@@ -591,8 +644,8 @@ if SITE_URL:
     items = sorted(feed_pool, key=lambda e: e[3], reverse=True)[:FEED_MAX]
     parts = ['<?xml version="1.0" encoding="utf-8"?>',
              '<feed xmlns="http://www.w3.org/2005/Atom">',
-             '<title>每日简报</title>',
-             '<subtitle>AI 新闻 · GitHub Trending · 摸摸鱼热榜 · 豆瓣电影</subtitle>',
+             '<title>%s</title>' % H.escape(T('site.feed_title')),
+             '<subtitle>%s</subtitle>' % H.escape(T('site.feed_sub')),
              '<id>%s/</id>' % SITE_URL,
              '<link rel="alternate" type="text/html" href="%s/"/>' % SITE_URL,
              '<link rel="self" type="application/atom+xml" href="%s/feed.xml"/>' % SITE_URL,

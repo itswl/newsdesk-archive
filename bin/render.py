@@ -60,7 +60,10 @@ def cdata(text):
 
 
 def today_state(reports_dir, sched_path, panels, plan, today=None, find=None):
-    """今天各任务的状态。key -> (状态, 提示文字, 完成时刻)
+    """今天各任务的状态。key -> (状态, 完成时刻, 附加信息)
+
+    **只返回数据，不拼提示文字**：提示要按站点语言渲染，在这里拼死中文的话
+    英文/繁中版就没法翻。调用方拿 status + meta 自己组句子。
 
     以「今天这份报告有没有产出」为准，而不是只读 scheduler.json。原因是顺序：
     run_task.sh 在自己末尾重建并发布站点，而调度器要等 run_task.sh 退出之后
@@ -94,17 +97,17 @@ def today_state(reports_dir, sched_path, panels, plan, today=None, find=None):
         if f:
             at = time.strftime('%H:%M', time.localtime(os.path.getmtime(f)))
             if '_draft' in os.path.basename(f):
-                out[key] = ('draft', '今天 %s 出了草稿，正式版还没生成' % at, at)
+                out[key] = ('draft', at, {})
             else:
-                out[key] = ('ok', '今天 %s 跑完' % at, at)
+                out[key] = ('ok', at, {})
             continue
         status = cur.get('status')
         if status == 'failed':
-            out[key] = ('failed', '今天失败了，重试 %s 次后放弃；详见 logs/' % cur.get('attempts', '?'), '')
+            out[key] = ('failed', '', {'attempts': cur.get('attempts', '?')})
         elif status == 'retrying':
-            out[key] = ('retrying', '第 %s 次重试中' % cur.get('attempts', '?'), '')
+            out[key] = ('retrying', '', {'attempts': cur.get('attempts', '?')})
         elif status == 'skipped':
-            out[key] = ('skipped', '错过补跑截止点，今日跳过', '')
+            out[key] = ('skipped', '', {})
         else:
-            out[key] = ('pending', '今天还没跑' + ('，计划 %s' % plan.get(key, '') if plan.get(key) else ''), '')
+            out[key] = ('pending', '', {'planned': plan.get(key, '')})
     return out

@@ -85,7 +85,8 @@ if [ -n "${PUBLISH_BUCKET:-}" ]; then
   #   3. 删之前逐条打印
   prune_public() {
     local keep n_keep
-    keep=$(find "$PUBDIR" -maxdepth 1 -name '????-??-??.html' -exec basename {} \; 2>/dev/null | sort)
+    # 多语言时日期页分布在根目录与各语言子目录里，所以按相对路径比对而不是文件名
+    keep=$(cd "$PUBDIR" && find . -name '????-??-??.html' 2>/dev/null | sed 's|^\./||' | sort)
     n_keep=$(printf '%s\n' "$keep" | grep -c '^[0-9]' || true)
     if [ "$n_keep" -eq 0 ]; then
       echo "  !! 本地没有任何日期页，疑似构建失败，跳过清理（不动公开桶）"; return 0
@@ -97,7 +98,8 @@ import json,re,sys
 try: d=json.load(sys.stdin)['data']
 except Exception: sys.exit(0)
 for o in d:
-    if re.fullmatch(r'\d{4}-\d{2}-\d{2}\.html', o['name']): print(o['name'])
+    # 根目录或单层语言子目录下的日期页；其余对象一律不碰
+    if re.fullmatch(r'(?:[A-Za-z-]{2,7}/)?\d{4}-\d{2}-\d{2}\.html', o['name']): print(o['name'])
 " | sort)
     local gone
     gone=$(comm -13 <(printf '%s\n' "$keep") <(printf '%s\n' "$remote"))
@@ -108,7 +110,7 @@ for o in d:
       oci os object delete -ns "$NS" -bn "$PUBLISH_BUCKET" --name "$obj" --force >/dev/null 2>&1 \
         && { echo "  − 已下线 $obj"; n=$((n+1)); } || echo "  ! 删除失败 $obj"
     done <<< "$gone"
-    echo "  ✓ 清理完成：下线 $n 个超窗页面，线上保留 $n_keep 天"
+    echo "  ✓ 清理完成：下线 $n 个超窗页面，线上保留 $n_keep 个日期页（含各语言）"
   }
   prune_public
   echo "  https://objectstorage.$(oci iam region-subscription list --query 'data[0]."region-name"' --raw-output 2>/dev/null).oraclecloud.com/n/$NS/b/$PUBLISH_BUCKET/o/index.html"

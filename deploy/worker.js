@@ -29,12 +29,13 @@ export default {
     if (path === '/' || path === '') path = '/index.html';
     if (path.endsWith('/')) path += 'index.html';
     // 只允许取站点自身产出的文件，不给遍历到桶里别的前缀
-    if (!/^\/[A-Za-z0-9._-]+\.(html|xml|json)$/.test(path)) {
+    // 允许一层语言子目录（/en/2026-09-16.html）。只放行单层，不给目录遍历留口子。
+    if (!/^\/(?:[A-Za-z]{2}(?:-[A-Za-z]{2,4})?\/)?[A-Za-z0-9._-]+\.(html|xml|json)$/.test(path)) {
       return new Response('Not Found', { status: 404 });
     }
 
     const name = path.slice(1);
-    const ttl  = TTL[name] ?? TTL._default;
+    const ttl  = TTL[name.split('/').pop()] ?? TTL._default;
     const upstream = origin(env) + '/' + encodeURIComponent(name);
 
     const res = await fetch(upstream, {
