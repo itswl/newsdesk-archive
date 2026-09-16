@@ -204,12 +204,16 @@ em{color:var(--fg2);font-style:normal}
 .st.warn{color:var(--warn-fg);border-color:var(--warn-bd)}
 .st.pend{opacity:.55}
 /* 语言切换：跟日期导航同一行，低调但点得到。当前语言不是链接，避免自己链自己 */
-.lang{display:inline-flex;gap:2px;align-items:center;margin-left:4px}
+/* 语言切换：一个框里三段，不是三个独立按钮。除了视觉上是一个整体，也更窄——
+   省掉了三份外边距与按钮之间的间隙。当前语言不是链接，避免自己链自己。 */
+.lang{display:inline-flex;align-items:stretch;margin-left:4px;
+  border:1px solid var(--bd2);border-radius:7px;overflow:hidden;background:var(--bg2)}
 .lang i{display:none;font-style:normal}          /* 缩写，窄屏才出来 */
-.lang a,.lang span{padding:4px 7px;border-radius:5px;font-size:12.5px;line-height:1;
-  color:var(--fg3);white-space:nowrap}
+.lang a,.lang span{display:flex;align-items:center;padding:5px 9px;font-size:12.5px;
+  line-height:1;color:var(--fg3);white-space:nowrap;border-left:1px solid var(--bd2)}
+.lang a:first-child,.lang span:first-child{border-left:0}
 .lang a:hover{background:var(--bg3);color:var(--fg)}
-.lang span.on{color:var(--fgh);background:var(--bg3)}
+.lang span.on{color:var(--fgh);background:var(--bg4);font-weight:600}
 .keep{margin:0 0 20px;padding:9px 13px;border-left:2px solid var(--quote-bd);
   background:var(--bg5);color:var(--fg2);font-size:13.5px;line-height:1.7;border-radius:0 4px 4px 0}
 footer.dis .keep{margin:0 0 12px;background:none;padding:0 0 0 11px}
@@ -227,7 +231,7 @@ footer.dis a{color:var(--fg2);border-bottom:1px solid var(--bd2)}
   .nav{margin-left:0;width:100%;gap:6px;flex-wrap:wrap;row-gap:7px}
   /* 语言块按自然宽度、不参与等分，否则它会把日期下拉挤没（实测挤到 14px）。
      窄屏换成缩写：简/繁/EN 约 66px，完整标签要 142px。 */
-  .lang{margin-left:0;flex:0 0 auto;order:9}
+  .lang{margin-left:0;flex:0 0 auto;order:9;align-self:stretch}
   .lang b{display:none}
   .lang i{display:inline}
   .nav a,.nav span.dis,.nav select,.nav button.tg{flex:1;text-align:center;padding:9px 6px;
@@ -264,7 +268,7 @@ footer.dis a{color:var(--fg2);border-bottom:1px solid var(--bd2)}
      133 涨到 178px）。相邻日期在下拉里看得到，不算信息丢失。 */
   .nav a em{display:none}
   .nav select{flex:1.6 1 76px;min-width:76px}
-  .lang a,.lang span{padding:5px 5px;font-size:11.5px}
+  .lang a,.lang span{padding:5px 7px;font-size:11.5px}
   .nav a.all,.nav button.tg{padding:9px 9px}
   table{font-size:12px}
   th,td{padding:7px 8px 7px 0}
