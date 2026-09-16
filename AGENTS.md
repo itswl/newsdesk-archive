@@ -167,4 +167,8 @@ denylist 天然会漂移，所以：机器特有的路径写进 `bin/sandbox-pat
 
 ⚠️ 问 `langs.py` 必须用**将要做构建的那个解释器**（项目内 `.venv`）。opencc 装在 venv 里，拿系统 python3 问会误判成「没装」，把繁中错误地剔掉——我就先踩了这一下。
 
+**feed 的 id 与链接必须跟着语言走。** `SITE_URL` 是语言无关的，三语共用它的话三个 feed 的条目 `id` 完全相同——而 Atom 要求 `id` 全局唯一，同时订阅两个语言的读者会看到同一个 id 配不同内容，阅读器要么去重、要么每次轮询来回翻；链接也会从英文 feed 点进中文页。用 `lang_url()` 算基址：默认语言在根、其余带 `/<lang>`。默认语言的 id 因此不变，老订阅者不受影响。
+
+**带通配符的文件名模式会连译文一起匹配到。** `github-trending_draft*.md` 会匹配 `github-trending_draft0916.en.md`，而刚翻完的译文 mtime 最新，`max(mtime)` 就把英文选进了中文站——**实测中招过**，某天的简中页整篇是英文，不报错、不进日志。`find()` 里按 `LANG_SUFFIXES` 显式排除，新增语言时那个元组会自动跟上。
+
 **发布带语言子目录，三处要一起改**：`build_site --lang/--out`、`backup_oci.sh` 的 `prune_public`（按相对路径比对，不是文件名）、`deploy/worker.js` 的路径白名单（放行单层语言目录，别放行多层——那是目录遍历）。

@@ -382,15 +382,24 @@ def task_status():
     return '<div class="status%s">%s</div>' % (' alert' if bad else '', ''.join(chips))
 
 
+# 译文的文件名后缀，例如 .en.md。带通配符的模式（github-trending_draft*.md）
+# 会连它们一起匹配到，所以非该语言的构建必须显式排掉——否则刚翻完的译文 mtime 最新，
+# max(mtime) 就把英文选进了中文站。实测中招过：某天的简中页整篇是英文。
+LANG_SUFFIXES = tuple('.%s.md' % c.lower() for c in i18n.LANGS)
+
+
 def find(rdir, pats, lang=None):
     """挑出某一份报告的文件。
 
     英文是 translate.py 预先翻好的独立文件 <名字>.en.md；
     繁中没有独立文件——用简中原文在渲染时现转（见 i18n.convert_body）。
     """
-    if (lang or LANG) == 'en':
+    lang = lang or LANG
+    if lang == 'en':
         pats = [p[:-3] + '.en.md' for p in pats]
     hits = [f for pat in pats for f in glob.glob(os.path.join(rdir, pat))]
+    if lang != 'en':
+        hits = [f for f in hits if not f.lower().endswith(LANG_SUFFIXES)]
     return max(hits, key=os.path.getmtime) if hits else None
 
 # ---------- 收集所有有报告的日期 ----------
@@ -429,6 +438,19 @@ def _conf(key, default=''):
 
 CONTACT  = _conf('CONTACT')     # 留空则只显示声明、不显示联系方式
 SITE_URL = _conf('SITE_URL').rstrip('/')   # 对外地址；留空则不生成 feed（feed 里的链接必须是绝对地址）
+# 默认语言在根目录，其余各占一个子目录。feed 里的 id 与链接必须跟着语言走——
+# 三语共用一个基址的话，三个 feed 的条目 id 完全相同，而 Atom 的 id 要求全局唯一：
+# 同时订阅两个语言的读者会看到同一个 id 配不同内容，阅读器要么去重、要么每次轮询
+# 来回翻；链接也会从英文 feed 点进中文页。
+ROOT_LANG = ALL_LANGS[0] if ALL_LANGS else LANG
+
+
+def lang_url(code=None):
+    code = code or LANG
+    return SITE_URL if code == ROOT_LANG else '%s/%s' % (SITE_URL, code)
+
+
+BASE_URL = lang_url()
 # feed 的覆盖范围必须跟站点一致，否则「对外只保留 N 天」这句话在 feed 上不成立。
 # 以前是写死 20：满负荷时 7 天 × 4 篇 = 28 条 > 20，feed 会悄悄收窄到 5 天，
 # 而站点还是 7 天——两个互不相干的常数撞出来的结果，不是谁决定的。
@@ -450,6 +472,20 @@ HEAD_JS = ('<script>try{var t=localStorage.getItem("theme");'
            'if(t)document.documentElement.dataset.theme=t}catch(e){}</script>')
 FEED_LINK = ('<link rel="alternate" type="application/atom+xml" title="%s" href="feed.xml">' % T('site.feed_title')
              if SITE_URL else '')
+
+
+def head_links(page):
+    """<head> 里的 feed 与语言互链。
+
+    hreflang 声明三语互为同一内容的不同版本——搜索引擎据此给用户对的那一份，
+    否则三个站会被当成互相抄袭的重复内容。x-default 指向根目录那个语言。
+    """
+    if not (SITE_URL and len(ALL_LANGS) > 1):
+        return FEED_LINK
+    alt = ''.join('<link rel="alternate" hreflang="%s" href="%s/%s">' % (c, lang_url(c), page)
+                  for c in ALL_LANGS)
+    alt += '<link rel="alternate" hreflang="x-default" href="%s/%s">' % (lang_url(ROOT_LANG), page)
+    return FEED_LINK + alt
 md = markdown.Markdown(extensions=['tables', 'fenced_code', 'attr_list'])
 
 STATUS = task_status()
@@ -538,7 +574,7 @@ for day in days:
            '<header><div class="bar"><h1 class="site">%s · %s%s</h1>%s</div>%s</header>'
            '<nav class="tabbar"><div class="tabs">%s</div></nav><main>%s'
            '<footer class="dis">%s%s</footer></main><script>%s</script></body></html>'
-           % (i18n.HTML_LANG[LANG], T('site.name'), day, HEAD_JS, FEED_LINK, CSS,
+           % (i18n.HTML_LANG[LANG], T('site.name'), day, HEAD_JS, head_links(day + '.html'), CSS,
               T('site.name'), day,
               '<b class="new">%s</b>' % T('site.latest') if day == days[-1] else '',
               nav_html(day),
@@ -626,7 +662,8 @@ open(os.path.join(SITE, 'archive.html'), 'w', encoding='utf-8').write(
     '<button class="tg" id="theme" title="%s">☀</button></div></div></header>'
     '<main>%s<table class="arch"><tr><th>%s</th><th>%s</th></tr>%s</table>'
     '<footer class="dis">%s%s</footer></main><script>%s</script></body></html>'
-    % (i18n.HTML_LANG[LANG], T('site.archive'), HEAD_JS, FEED_LINK, CSS, T('site.archive'),
+    % (i18n.HTML_LANG[LANG], T('site.archive'), HEAD_JS, head_links('archive.html'), CSS,
+       T('site.archive'),
        # 「共 N 天」在限窗时是假话——更早的只是下线了，不是不存在
        T('arch.recent') if WINDOWED else T('arch.total'), T('arch.days', len(days)),
        T('nav.back', newest), lang_switch('archive.html'), H.escape(T('nav.theme')),
@@ -646,15 +683,19 @@ if SITE_URL:
              '<feed xmlns="http://www.w3.org/2005/Atom">',
              '<title>%s</title>' % H.escape(T('site.feed_title')),
              '<subtitle>%s</subtitle>' % H.escape(T('site.feed_sub')),
-             '<id>%s/</id>' % SITE_URL,
-             '<link rel="alternate" type="text/html" href="%s/"/>' % SITE_URL,
-             '<link rel="self" type="application/atom+xml" href="%s/feed.xml"/>' % SITE_URL,
+             '<id>%s/</id>' % BASE_URL,
+             '<link rel="alternate" type="text/html" href="%s/"/>' % BASE_URL,
+             '<link rel="self" type="application/atom+xml" href="%s/feed.xml"/>' % BASE_URL,
+             # 指向其他语言的同一份 feed，方便阅读器和搜索引擎发现
+             ] + ['<link rel="alternate" type="application/atom+xml" hreflang="%s" '
+                  'title="%s" href="%s/feed.xml"/>' % (c, i18n.LANG_LABEL[c], lang_url(c))
+                  for c in ALL_LANGS if c != LANG] + [
              '<updated>%s</updated>' % t(items[0][3] if items else time.time()),
              '<generator uri="%s">newsdesk</generator>' % SITE_URL]
     if CONTACT:
         parts.append('<author><name>newsdesk</name><email>%s</email></author>' % H.escape(CONTACT))
     for day, key, label, mtime, body in items:
-        url = '%s/%s.html#%s' % (SITE_URL, day, key)
+        url = '%s/%s.html#%s' % (BASE_URL, day, key)
         parts += ['<entry>',
                   '<title>%s · %s</title>' % (H.escape(label), day),
                   '<id>%s</id>' % url,              # 稳定不变，否则阅读器会重复推送

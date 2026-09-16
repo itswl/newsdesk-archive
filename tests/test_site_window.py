@@ -125,6 +125,43 @@ class TestWindow(unittest.TestCase):
         self.assertEqual(feed_days, has_report,
                          'feed 与站点覆盖的日期不一致：feed 缺 %s' % (has_report - feed_days))
 
+    def test_translated_files_do_not_leak_into_other_languages(self):
+        """带通配符的模式会连译文一起匹配到。
+
+        `github-trending_draft*.md` 会匹配 `github-trending_draft0916.en.md`，
+        而刚翻完的译文 mtime 最新，`max(mtime)` 就把英文选进了中文站——实测中招过，
+        某天的简中页整篇是英文，而且不报错、不进日志，只有逐页看才发现。
+        """
+        # 找一个既有中文原文、又有对应译文的日子
+        day = None
+        for d in all_days():
+            files = os.listdir(os.path.join(REPORTS, d))
+            if any(f.endswith('.en.md') for f in files) and any(
+                    f.endswith('.md') and not f.endswith('.en.md') for f in files):
+                day = d
+                break
+        if not day:
+            self.skipTest('reports/ 里没有中英并存的日子')
+        out = self.build('--lang', 'zh-CN')
+        page = open(os.path.join(out, day + '.html'), encoding='utf-8').read()
+        body = re.sub(r'<[^>]+>', '', page)
+        han = len(re.findall(r'[\u4e00-\u9fff]', body))
+        self.assertGreater(han, 200,
+                           '简中页只有 %d 个汉字，多半是把 .en.md 选进来了' % han)
+
+    def test_english_build_picks_translated_files(self):
+        day = None
+        for d in all_days():
+            if any(f.endswith('.en.md') for f in os.listdir(os.path.join(REPORTS, d))):
+                day = d
+                break
+        if not day:
+            self.skipTest('reports/ 里没有译文')
+        out = self.build('--lang', 'en')
+        page = open(os.path.join(out, day + '.html'), encoding='utf-8').read()
+        # 英文版该有正文，不该整页都是「当天没有这份报告」
+        self.assertLess(page.count('class="tab absent"'), 4, '英文版没挑到任何译文')
+
     def test_local_full_build_is_unaffected(self):
         # 限窗只针对发布；本地与私有桶备份始终全量
         self.assertGreaterEqual(len(self.pages(self.build())), len(self.pages(self.build('--days', '3'))))
