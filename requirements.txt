@@ -3,3 +3,6 @@
 markdown        # 报告 Markdown -> HTML
 nh3             # 渲染后 HTML 清洗。缺失时 build_site.py 直接拒绝运行，
                 # 见 bin/render.py —— 报告正文含第三方文本，不清洗等于存储型 XSS
+opencc-python-reimplemented   # 简体 -> 繁体（s2twp，台湾用词）。
+                # 只有 SITE_LANGS 含 zh-TW 时才需要；缺了会被 bin/langs.py 剔除
+                # 并说明原因，不会静默发布一个跟简中逐字节相同的「繁体」站。
