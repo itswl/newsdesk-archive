@@ -145,17 +145,19 @@ def shape(md):
 def translate_file(src, force=False):
     dst = src[:-3] + '.en.md'
     if not force and os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
-        return 'skip', 0, ''
+        return 'skip', 0, '', {'input': 0, 'output': 0}
     text = open(src, encoding='utf-8').read()
     t0 = time.time()
     pieces = chunks(text)
-    done = []
+    done, used = [], {'input': 0, 'output': 0}
     for i, piece in enumerate(pieces, 1):
         last = None
         for attempt in range(1, RETRIES + 1):
             try:
-                seg, _usage = call(piece)
+                seg, usage = call(piece)
                 done.append(seg)
+                used['input'] += usage.get('input_tokens', 0)
+                used['output'] += usage.get('output_tokens', 0)
                 break
             except Exception as e:           # noqa: BLE001
                 last = e
@@ -177,7 +179,7 @@ def translate_file(src, force=False):
     with open(tmp, 'w', encoding='utf-8') as f:
         f.write(out if out.endswith('\n') else out + '\n')
     os.replace(tmp, dst)
-    return 'ok', time.time() - t0, warn
+    return 'ok', time.time() - t0, warn, used
 
 
 def days_with_reports():
@@ -197,6 +199,8 @@ def main():
         dates = [time.strftime('%Y-%m-%d')]
 
     total_fail = 0
+    # 用量要看得见：按量付费不吃订阅窗口，但它确实在花钱，而花了多少原本一点痕迹都没有
+    grand = {'input': 0, 'output': 0, 'files': 0}
     for date in dates:
         d = os.path.join(REPORTS, date)
         if not os.path.isdir(d):
@@ -206,7 +210,7 @@ def main():
         for src in srcs:
             name = os.path.relpath(src, ROOT)
             try:
-                st, dt, warn = translate_file(src, force)
+                st, dt, warn, used = translate_file(src, force)
             except Exception as e:                      # noqa: BLE001
                 total_fail += 1
                 print('  ✗ %s  %s' % (name, str(e)[:120]))
@@ -214,9 +218,44 @@ def main():
             if st == 'skip':
                 print('  · %s  已是最新，跳过' % name)
             else:
-                print('  ✓ %s  %.0fs%s' % (name, dt, ('  ⚠ 结构对不上:' + warn) if warn else ''))
+                grand['input'] += used['input']; grand['output'] += used['output']
+                grand['files'] += 1
+                print('  ✓ %s  %.0fs  %.1fk tokens%s'
+                      % (name, dt, (used['input'] + used['output']) / 1000,
+                         ('  ⚠ 结构对不上:' + warn) if warn else ''))
+    if grand['files']:
+        print('  ── 本次 %d 篇，入 %.1fk / 出 %.1fk tokens，合计 %.1fk'
+              % (grand['files'], grand['input'] / 1000, grand['output'] / 1000,
+                 (grand['input'] + grand['output']) / 1000))
+        _record_usage(grand)
     # 翻译失败不该拖垮整条流水线：中文站照常发布，英文那份缺了而已
     return 1 if total_fail else 0
+
+
+def _record_usage(g):
+    """按天累计到 state/translate-usage.json。
+
+    按量付费不吃订阅的用量窗口，但它确实在花钱——而花了多少原本一点痕迹都没有。
+    出账单之前先能自己看见。
+    """
+    path = os.path.join(ROOT, 'state', 'translate-usage.json')
+    day = time.strftime('%Y-%m-%d')
+    try:
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    rec = data.setdefault(day, {'input': 0, 'output': 0, 'files': 0})
+    for k in ('input', 'output', 'files'):
+        rec[k] += g[k]
+    # 只留最近 60 天，这个文件不该无限长
+    for old in sorted(data)[:-60]:
+        data.pop(old, None)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=1, sort_keys=True)
+    os.replace(tmp, path)
 
 
 if __name__ == '__main__':

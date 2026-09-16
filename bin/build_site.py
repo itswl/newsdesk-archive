@@ -43,7 +43,31 @@ PATS = {
     'momoyu':   ['momoyu.md'],
     'douban':   ['douban.md'],
 }
-PANELS = [(k, T('panel.' + k), PATS[k]) for k in ('ai', 'trending', 'momoyu', 'douban')]
+def _schedule():
+    """从 scheduler.py 读时间表，供状态条的提示文案用——写死会跟真实调度漂移。"""
+    out = {}
+    try:
+        src = open(os.path.join(ROOT, 'bin', 'scheduler.py')).read()
+        blk = src.split('SCHEDULE = [', 1)[1].split(']', 1)[0]
+        for t, k in re.findall(r"\('(\d{1,2}:\d{2})',\s*'(\w+)'\)", blk):
+            out[k] = t
+    except (OSError, IndexError):
+        pass
+    return out
+
+
+# 板块顺序按当天的触发时刻排，不按写死的板块名顺序。
+# 状态条读起来才是一条时间线：左边是已经跑过的、右边是还没到的。
+# 用板块名顺序的话，跑完的会被没跑的隔开（✓ · · ✓），看着像出了错。
+# 标签页跟着同一个顺序，否则上下两行对不上。
+# 读不到定时表就退回固定顺序——顺序不对只是不好看，不该让站点出不来。
+def _panel_order():
+    plan = _schedule()
+    fixed = ('ai', 'trending', 'momoyu', 'douban')
+    return sorted(fixed, key=lambda k: (plan.get(k) or '99:99', fixed.index(k)))
+
+
+PANELS = [(k, T('panel.' + k), PATS[k]) for k in _panel_order()]
 # 归档页是扫读视图，用短标签——全名会在窄屏折成两行，几十天下来页面长一倍
 SHORT = {k: T('short.' + k) for k in PATS}
 
@@ -350,19 +374,6 @@ document.onkeydown=function(e){
   addEventListener('resize',function(){document.querySelectorAll('.tw').forEach(sync)});
 })();
 """
-
-def _schedule():
-    """从 scheduler.py 读时间表，供状态条的提示文案用——写死会跟真实调度漂移。"""
-    out = {}
-    try:
-        src = open(os.path.join(ROOT, 'bin', 'scheduler.py')).read()
-        blk = src.split('SCHEDULE = [', 1)[1].split(']', 1)[0]
-        for t, k in re.findall(r"\('(\d{1,2}:\d{2})',\s*'(\w+)'\)", blk):
-            out[k] = t
-    except (OSError, IndexError):
-        pass
-    return out
-
 
 def today_state():
     # 固定看简中原文：状态条表达的是「任务今天跑没跑」，

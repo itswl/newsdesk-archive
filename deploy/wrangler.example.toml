@@ -11,6 +11,8 @@ OCI_BUCKET    = "你的公开桶名"
 
 # 站点多久没更新算出事（小时）。相邻两档最长间隔 8.75h，夜里合盖次日补跑约 19h，
 # 26 不会误报又能在「整整一天没动静」时叫出来。
+# 错误页上的语言入口跟着它走。要跟 bin/config.conf 的 SITE_LANGS 保持一致。
+SITE_LANGS = "zh-CN,zh-TW,en"
 STALE_ALERT_HOURS = "26"
 # 告警体。留空用 {"title":..,"text":..}；飞书/Lark、钉钉、Slack 形状各不相同
 ALERT_PAYLOAD = "{\"msg_type\":\"text\",\"content\":{\"text\":\"{{TEXT}}\"}}"

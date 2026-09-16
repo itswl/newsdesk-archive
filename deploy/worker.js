@@ -22,7 +22,15 @@ const TTL = { 'index.html': 120, 'feed.xml': 120, 'status.json': 30, 'archive.ht
 // 错误页要给出 content-type 与可读内容。原来直接 `new Response('Not Found', {status:404})`
 // ——Workers 会补 text/plain，但纯文本页在部分浏览器/内嵌 WebView 里会被当附件下载，
 // 而且用户看到的只有两个英文单词，不知道该往哪走。三语站点的 404 也该是三语的。
-function errorPage(status, title, detail) {
+function errorPage(status, title, detail, env) {
+  // 语言入口跟着 SITE_LANGS 走，别写死三语——只发简体的站点上，
+  // 指向 /zh-TW/ 与 /en/ 的链接本身就是 404。第一个语言在根目录。
+  const codes = String(env && env.SITE_LANGS || 'zh-CN')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const LABEL = { 'zh-CN': '简体', 'zh-TW': '繁體', en: 'English' };
+  const links = codes.length > 1
+    ? codes.map((c, i) => `<a href="${i === 0 ? '/' : '/' + c + '/'}">${LABEL[c] || c}</a>`).join('')
+    : '<a href="/">返回首页 · Home</a>';
   const body = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${status} · ${title}</title><style>
@@ -42,7 +50,7 @@ p{margin:0 0 6px;color:#8f96a3}
 <h1>${status}</h1>
 <p>${title}</p>
 <p style="font-size:13px;opacity:.7">${detail}</p>
-<div class="l"><a href="/">简体</a><a href="/zh-TW/">繁體</a><a href="/en/">English</a></div>
+<div class="l">${links}</div>
 </div></body></html>`;
   return new Response(body, {
     status,
@@ -58,7 +66,7 @@ p{margin:0 0 6px;color:#8f96a3}
 export default {
   async fetch(request, env) {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-      const r = errorPage(405, '方法不被允许 · Method not allowed', 'GET / HEAD only.');
+      const r = errorPage(405, '方法不被允许 · Method not allowed', 'GET / HEAD only.', env);
       r.headers.set('Allow', 'GET, HEAD');
       return r;
     }
@@ -71,7 +79,7 @@ export default {
     // 允许一层语言子目录（/en/2026-09-16.html）。只放行单层，不给目录遍历留口子。
     if (!/^\/(?:[A-Za-z]{2}(?:-[A-Za-z]{2,4})?\/)?[A-Za-z0-9._-]+\.(html|xml|json)$/.test(path)) {
       return errorPage(404, '页面不存在 · Page not found',
-                       '这个地址不在本站的产出范围内。 This path is not served by this site.');
+                       '这个地址不在本站的产出范围内。 This path is not served by this site.', env);
     }
 
     const name = path.slice(1);
@@ -86,9 +94,9 @@ export default {
     if (!res.ok) {
       return res.status === 404
         ? errorPage(404, '页面不存在 · Page not found',
-                    '这一天可能已超出保留期。 This day may be outside the retention window.')
+                    '这一天可能已超出保留期。 This day may be outside the retention window.', env)
         : errorPage(502, '上游暂时不可用 · Upstream unavailable',
-                    '对象存储没有正常响应，稍后再试。 Object storage did not respond; please retry.');
+                    '对象存储没有正常响应，稍后再试。 Object storage did not respond; please retry.', env);
     }
 
     const h = new Headers(res.headers);

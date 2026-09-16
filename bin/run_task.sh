@@ -78,9 +78,18 @@ run_model() {
       # permitted，连 echo 都跑不了），而模型会靠 Read/Write 绕过去把任务做完，
       # 日志上看不出异常。
       # 不用 --dangerously-skip-permissions：那会绕过所有权限检查。
+      #
+      # --strict-mcp-config：只用 --mcp-config 指定的 MCP server，忽略其他所有来源。
+      # 不传 --mcp-config 就是一个都不加载。这条不是可选的——
+      # 没有它，分析层会继承你交互式会话里的全局 MCP server。实测它手里拿到过
+      # mcp__typex__typex_send_message 与 typex_upload_chat_file：MCP server 是
+      # 独立进程、不在这层沙箱里，所以 network.allowedDomains: [] 对它完全无效。
+      # 也就是说「分析层出不了网」这个前提会被悄悄推翻，而分析层每天无人值守地
+      # 读 RSS 正文、仓库描述、热榜标题——那些都是别人能写的内容。
       claude -p --model "$CLAUDE_MODEL" \
         --settings "$SETTINGS" \
         --permission-prompts none \
+        --strict-mcp-config \
         "$prompt" </dev/null
       ;;
     api)
@@ -100,6 +109,7 @@ run_model() {
       claude -p --model "$FALLBACK_MODEL" \
         --settings "$SETTINGS" \
         --permission-prompts none \
+        --strict-mcp-config \
         "$prompt" </dev/null
       ;;
     codex)
@@ -158,7 +168,15 @@ LANGS="$("$ROOT/.venv/bin/python" bin/langs.py 2>/dev/null || echo zh-CN)"
 case ",$LANGS," in
   *,en,*)
     echo "--- $(TS) 翻译英文版 ---"
-    python3 bin/translate.py "$DATE" || echo "!! 翻译有失败项，英文站将缺少对应报告（中文站不受影响）"
+    if ! python3 bin/translate.py "$DATE"; then
+      # 只 echo 的话，英文站可以连续多天缺内容而没人知道——这正是这套流水线
+      # 一直在防的那种静默失效。中文站不受影响，所以不中止，但要叫一声。
+      echo "!! 翻译有失败项，英文站将缺少对应报告（中文站不受影响）"
+      python3 bin/alert.py "⚠️ newsdesk $TASK 英文翻译失败" \
+        "中文站照常发布，英文站会缺少对应报告。
+常见原因：API 余额不足、密钥失效、供应商故障。
+详见 logs/${DATE}_${TASK}.log；补翻： python3 bin/translate.py $DATE" || true
+    fi
     ;;
 esac
 
