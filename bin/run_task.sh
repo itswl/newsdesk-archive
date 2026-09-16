@@ -99,12 +99,16 @@ run_model() {
       for v in FALLBACK_BASE_URL FALLBACK_AUTH_TOKEN FALLBACK_MODEL; do
         eval "[ -n \"\${$v:-}\" ]" || { echo "!!! ENGINE=api 需要 $v，config.conf 里没配，拒绝运行"; return 1; }
       done
+      # 端点地址归一化：claude 自己会拼 /v1/messages，配置里若带了 /v1 就会变成
+      # /v1/v1/messages（实测 404）。两种写法都放行，和 translate.py 保持一致。
+      local base="${FALLBACK_BASE_URL%/}"
+      base="${base%/v1}"
       render_settings || return 1
       # 令牌只走环境变量传给 claude 自己，不落任何文件。
       # ⚠️ 假设模型在沙箱里能看到这个环境变量（非交互下探不出来，按最坏情况设计）。
       # 分析层禁网，拿不出去，但产出是要公开发布的——所以 bin/leakcheck.py 在
       # 发布前会拦一道，见那里。
-      ANTHROPIC_BASE_URL="$FALLBACK_BASE_URL" \
+      ANTHROPIC_BASE_URL="$base" \
       ANTHROPIC_AUTH_TOKEN="$FALLBACK_AUTH_TOKEN" \
       claude -p --model "$FALLBACK_MODEL" \
         --settings "$SETTINGS" \

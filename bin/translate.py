@@ -24,6 +24,10 @@ TIMEOUT = 300
 # 输出上限被截断——而截断是静默的，文件看着正常只是后半截没了。
 CHUNK_CHARS = 5000
 RETRIES = 2
+# 必须显式设 UA。urllib 默认发 "Python-urllib/3.x"，Cloudflare 会按客户端签名
+# 直接封掉——实测某个 Cloudflare 后面的网关对这个 UA 返回 403 `error code: 1010`，
+# 换任何其他 UA 都 200。这条错误长得像鉴权失败，很容易一路查到密钥上去。
+UA = 'newsdesk/1.0 (+https://github.com/itswl/newsdesk)'
 
 SYSTEM = (
     "You translate Chinese tech-briefing reports into English.\n"
@@ -81,15 +85,21 @@ def call(text):
     if not base.lower().startswith('https://'):
         sys.exit('!! FALLBACK_BASE_URL 必须是 https://，当前是 %s。'
                  '明文 HTTP 会把 API 令牌暴露在链路上。' % base.split('://')[0])
+    # 端点地址归一化：有的网关文档给 https://host，有的给 https://host/v1，
+    # 两种都常见。不处理的话后者会拼成 /v1/v1/messages——实测 404，而且是每次
+    # 翻译都失败、只在日志里留一行。
+    root = base.rstrip('/')
+    if root.endswith('/v1'):
+        root = root[:-3]
     req = urllib.request.Request(
-        base.rstrip('/') + '/v1/messages',
+        root + '/v1/messages',
         data=json.dumps({'model': model, 'max_tokens': MAX_TOKENS, 'system': SYSTEM,
                          'messages': [{'role': 'user', 'content': text}]}).encode(),
         # x-api-key 是 Anthropic 接口的标准头。它与 Authorization: Bearer 在 TLS 下
         # 等价，重定向转发的行为也一样（都会转发），所以防护靠上面的 _NoRedirect，
         # 不靠换头名。
         headers={'content-type': 'application/json', 'x-api-key': tok,
-                 'anthropic-version': '2023-06-01'})
+                 'anthropic-version': '2023-06-01', 'user-agent': UA})
     with _opener.open(req, timeout=TIMEOUT) as r:
         d = json.load(r)
     out = ''.join(c.get('text', '') for c in d.get('content', []))

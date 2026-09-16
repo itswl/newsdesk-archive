@@ -21,6 +21,10 @@ import json, os, sys, urllib.parse, urllib.request, urllib.error
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TIMEOUT = 10
+# 显式 UA：urllib 默认的 "Python-urllib/3.x" 会被 Cloudflare 按签名封掉
+# （实测另一个端点返回 403 error code 1010）。告警端点多半也在 CDN 后面，
+# 而告警发不出去这件事本身最难发现。
+UA = 'newsdesk/1.0 (+https://github.com/itswl/newsdesk)'
 
 
 def _conf(key, default=''):
@@ -45,7 +49,7 @@ def send(title, text):
             req = urllib.request.Request(
                 url.replace('{{TEXT}}', urllib.parse.quote(body, safe=''))
                    .replace('{{TITLE}}', urllib.parse.quote(title, safe='')),
-                method='GET')
+                headers={'user-agent': UA}, method='GET')
         else:
             tpl = _conf('ALERT_PAYLOAD')
             if tpl:
@@ -57,7 +61,8 @@ def send(title, text):
                 payload = json.dumps({'title': title, 'text': body},
                                      ensure_ascii=False).encode()
             req = urllib.request.Request(url, data=payload, method='POST',
-                                         headers={'Content-Type': 'application/json'})
+                                         headers={'Content-Type': 'application/json',
+                                                  'user-agent': UA})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             if not 200 <= r.status < 300:
                 return False
