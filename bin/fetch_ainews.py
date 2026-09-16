@@ -140,7 +140,7 @@ def main():
             iso_d = norm_date(r['date'])
             try:
                 fresh = datetime.datetime.fromisoformat(iso_d) >= cutoff
-            except Exception:
+            except (ValueError, TypeError):
                 fresh = True
             if fresh:
                 kept.append(dict(source='Anthropic', source_kind='一手·厂商公告', title=r['title'],
@@ -169,7 +169,7 @@ def main():
             fresh = True
             try:
                 fresh = datetime.datetime.fromisoformat(iso_d) >= cutoff
-            except Exception:
+            except (ValueError, TypeError):
                 pass                      # 解析不出日期的一律保留，交给模型判断
             if not fresh:
                 continue

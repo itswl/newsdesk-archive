@@ -31,7 +31,7 @@ data = None
 if raw:
     try:
         data = json.loads(raw)
-    except Exception:
+    except ValueError:
         data = None
 if not data or not data.get('data'):
     print('主接口异常，启动降级探测…', file=sys.stderr)
@@ -59,7 +59,7 @@ for c in cats:
         try:
             t = datetime.datetime.fromisoformat(ct.replace('Z', '+00:00')) + datetime.timedelta(hours=8)
             ts, lag = t.strftime('%m-%d %H:%M'), (NOW - t.replace(tzinfo=NOW.tzinfo)).total_seconds() / 3600
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             ts, lag = str(ct), None
         if lag and lag > 6:
             stale.append((s.get('name'), ts, round(lag, 1)))

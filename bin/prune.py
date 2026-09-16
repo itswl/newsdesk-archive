@@ -7,7 +7,7 @@
   采集数据    trending 快照是方法论基线，留 180 天；且最新一份永不删
   站点页面    每天几十 KB，全留
 """
-import os, re, sys, glob, time, datetime
+import os, re, glob, time, datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_HTML_DAYS = 7

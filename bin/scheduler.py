@@ -196,9 +196,20 @@ def log(msg):
         f.write(line + '\n')
 
 def load_state():
+    """读调度状态。
+
+    ⚠️ 不能对任何异常都回 {}：文件还没生成是正常的（首次运行），但文件存在却读不出来
+    是另一回事——回 {} 意味着当天所有任务被当成没跑过，会全部重跑一遍，正好把用量
+    窗口那套间隔毁掉。两种情况必须分开，后者要留痕。
+    """
+    if not os.path.exists(STATE):
+        return {}
     try:
-        return json.load(open(STATE))
-    except Exception:
+        with open(STATE, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError) as e:
+        log('!! 状态文件存在却读不出来（%r）——当日任务会被当成未跑过而重跑。'
+            '文件: %s' % (e, STATE))
         return {}
 
 def save_state(s):

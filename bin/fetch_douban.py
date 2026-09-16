@@ -23,7 +23,7 @@ url = ('https://movie.douban.com/j/search_subjects?type=movie&tag=%s&sort=%s&pag
 raw = curl(url, {'Referer': 'https://movie.douban.com/explore'})
 try:
     subs = json.loads(raw)['subjects']
-except Exception:
+except (ValueError, KeyError, TypeError):
     sys.exit('列表接口失败: %s' % (raw or '')[:200])
 json.dump(subs, open(os.path.join(DD, 'list.json'), 'w'), ensure_ascii=False, indent=1)
 print('列表 %d 部' % len(subs))
@@ -39,9 +39,12 @@ for s in subs:
     body = ''.join(ch for ch in (body or '') if ord(ch) >= 32 or ch == '\t')
     try:
         d = json.loads(body)
-        assert d.get('title')
-    except Exception:
-        fail.append(mid); print('  FAIL %s' % mid); time.sleep(0.5); continue
+        # 不用 assert：python -O 会把它整条剥掉，那样没有 title 的脏数据会被当成
+        # 好数据写进去，而且只在报告里表现为一部没有片名的电影——不会报错
+        if not d.get('title'):
+            raise ValueError('详情缺少 title')
+    except (ValueError, TypeError) as e:
+        fail.append(mid); print('  FAIL %s (%s)' % (mid, e)); time.sleep(0.5); continue
     open(os.path.join(det, '%s.json' % mid), 'w').write(json.dumps(d, ensure_ascii=False))
     ok.append(mid)
     print('  OK   %s  %s  %s' % (mid, d['title'], (d.get('rating') or {}).get('value')))
