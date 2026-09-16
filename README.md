@@ -89,6 +89,7 @@ bin/test.sh [--unit]                   # 全部测试；--unit 只跑纯函数�
 .venv/bin/python bin/langs.py --explain  # 实际会发布哪些语言、被剔除的为什么
 bin/translate.py [日期] [--all]        # 补翻英文
 bin/restore_oci.sh [--days N]          # 换机器时从私有桶拉回产出
+bin/difftest.sh out|dir <A> -- <B>     # 对拍两个实现的输出是否逐字节一致
 ```
 
 调度器是纯 stdlib 常驻进程，不依赖 launchd 或 cron。关键行为是**睡眠补跑**：每 30 秒
