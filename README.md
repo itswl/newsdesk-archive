@@ -280,7 +280,22 @@ site-public/   最近 N 天     →  公开桶（对外）
 
 ## 三语
 
-`SITE_LANGS=zh-CN,zh-TW,en` 会产出三份站点：
+`SITE_LANGS` 留空 = 只发简体。**多语言必须主动开启，而且「列进来」不等于「开启」**——
+两个条件都满足才生效：
+
+| 语言 | 还需要 |
+|---|---|
+| `zh-TW` | 装了 `opencc`（否则繁中版会跟简中逐字节相同，挂出去是在骗人） |
+| `en` | `FALLBACK_BASE_URL` / `FALLBACK_AUTH_TOKEN` / `FALLBACK_MODEL` 三个齐备（否则翻不出东西，构建出来是个所有报告都缺失的空站） |
+
+缺依赖的语言会被剔除并在日志里说明原因，其余语言照常发布——不因为英文没配好就把整条
+流水线停掉。查当前实际生效哪些：
+
+```bash
+.venv/bin/python bin/langs.py --explain
+```
+
+配齐之后 `SITE_LANGS=zh-CN,zh-TW,en` 会产出三份站点：
 
 ```
 /              简体   模型直接产出

@@ -145,9 +145,17 @@ case "$TASK" in
   *) echo "用法: run_task.sh <ai|trending|momoyu|douban> [claude|codex|api]"; exit 2 ;;
 esac
 
+# 实际会发布哪些语言。「列进 SITE_LANGS」不等于「能用」——英文缺 API 配置就翻不出
+# 东西，硬构建出来是个所有报告都缺失的空站；繁中缺 opencc 会跟简中逐字节相同。
+# 两个条件都满足才算开启，判定见 bin/langs.py。
+# 必须用 .venv 的解释器问：opencc 装在 venv 里，拿系统 python3 会误判成没装。
+LANGS="$("$ROOT/.venv/bin/python" bin/langs.py 2>/dev/null || echo zh-CN)"
+"$ROOT/.venv/bin/python" bin/langs.py --explain 2>/dev/null | grep '^剔除' \
+  && echo "!! 上述语言未启用（依赖或配置不全），其余语言照常发布"
+
 # 英文版正文。繁中不用翻——构建时 OpenCC 现转。
 # 翻译失败不拖垮流水线：中文站照常发布，英文那份缺一篇而已，页面会显示「当天没有这份报告」。
-case ",${SITE_LANGS:-}," in
+case ",$LANGS," in
   *,en,*)
     echo "--- $(TS) 翻译英文版 ---"
     python3 bin/translate.py "$DATE" || echo "!! 翻译有失败项，英文站将缺少对应报告（中文站不受影响）"
@@ -162,7 +170,6 @@ echo "--- $(TS) 重建站点 ---"
 # 没上传的日子，点进去 404。范围要在生成时就定下来。
 "$ROOT/.venv/bin/python" bin/build_site.py
 if [ "${PUBLIC_DAYS:-0}" -gt 0 ] 2>/dev/null; then
-  LANGS="${SITE_LANGS:-zh-CN}"
   FIRST="${LANGS%%,*}"
   # 默认语言放根目录，其余各占一个子目录——这样换语言时 URL 只多一段，
   # 且根路径仍然直接可用（对象存储没有默认文档，Worker 补 index.html 也只补根那一层）
