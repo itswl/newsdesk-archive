@@ -211,6 +211,33 @@ data/ reports/ site/ site-public/ logs/ state/    运行时生成，不进版本
 （含 `state/`，所以当天跑过的任务不会重跑）。`state/sandbox.sb` 与 `agent-settings.json`
 有意不备份——按本机路径渲染，换机器会自动重新生成。
 
+## 参考实现与移植
+
+`python-reference` 这个 tag 指向 Python 版的归档点：140 个测试全过、四路采集实跑
+正常、三语站点与 feed 线上可访问。**要把某个模块改写成别的语言时，以它为准。**
+
+这个项目适合逐模块移植，因为两样东西都现成：
+
+- **测试即规格**。`tests/` 下 140 个用例覆盖了纯函数的行为边界（XSS 载荷、补跑的
+  跨日跨年、配额三分类、判重归一化、feed 与站点的覆盖一致性），不用自己猜什么叫对。
+- **产出是确定性的**。同样的 `data/` 与参数，`build_site.py` 两次运行逐字节相同，
+  所以「新实现正确」可以被证明。用 `bin/difftest.sh` 对拍：
+
+```bash
+bin/difftest.sh out .venv/bin/python bin/langs.py -- ./langs-go
+bin/difftest.sh dir "python bin/build_site.py --days 7 --out /tmp/ref" /tmp/ref \
+                 -- "./sitegen --days 7 --out /tmp/new" /tmp/new
+```
+
+耦合度也扫过：`langs.py` `render.py` `i18n.py` `history.py` `leakcheck.py` `alert.py`
+`prune.py` `render_settings.py` `translate.py` 都是零本地依赖，可以单独换掉。
+`build_site.py` 依赖 `i18n` 与 `render`，`scheduler.py` 依赖 `alert`，采集脚本依赖
+`common`——按依赖顺序移植即可。
+
+有一处移植风险提前知道：`i18n.py` 的简→繁靠 `opencc` 的 `s2twp`，值钱的是**词汇**
+转换（软件→軟體、内存→記憶體、缓存→快取）而不是换字。别的语言的移植版词表质量参差，
+换之前先单独验这一条。
+
 ## 更多
 
 - `AGENTS.md`——改动前必须知道的约束，以及方法论上踩过的坑（`stars today` 是滞后值、
