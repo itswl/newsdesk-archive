@@ -16,6 +16,9 @@ except Exception:                       # 没装就退化成不转换，站点�
 LANGS = ('zh-CN', 'zh-TW', 'en')
 HTML_LANG = {'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', 'en': 'en'}
 LANG_LABEL = {'zh-CN': '简体', 'zh-TW': '繁體', 'en': 'English'}
+# 窄屏用的缩写。完整标签三个加起来 142px，在 320px 的屏上把日期下拉挤没了。
+# 两份都渲染出来、用 CSS 切换，比按屏宽在服务端猜要可靠（同一份 HTML 两种宽度都对）。
+LANG_ABBR = {'zh-CN': '简', 'zh-TW': '繁', 'en': 'EN'}
 
 S = {
     # ── 站点骨架 ──

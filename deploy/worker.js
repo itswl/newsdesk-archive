@@ -18,10 +18,49 @@ function origin(env) {
 // 就被 CDN 藏起来了，监控看到的永远是 5 分钟前的健康状态
 const TTL = { 'index.html': 120, 'feed.xml': 120, 'status.json': 30, 'archive.html': 300, _default: 300 };
 
+
+// 错误页要给出 content-type 与可读内容。原来直接 `new Response('Not Found', {status:404})`
+// ——Workers 会补 text/plain，但纯文本页在部分浏览器/内嵌 WebView 里会被当附件下载，
+// 而且用户看到的只有两个英文单词，不知道该往哪走。三语站点的 404 也该是三语的。
+function errorPage(status, title, detail) {
+  const body = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${status} · ${title}</title><style>
+:root{color-scheme:dark light}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+ background:#16181d;color:#c9ced8;font:15px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC",
+ "Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;padding:24px}
+@media (prefers-color-scheme:light){body{background:#fbfbf9;color:#3d4148}}
+.b{max-width:420px;text-align:center}
+h1{margin:0 0 6px;font-size:40px;font-weight:600;letter-spacing:.02em;opacity:.35}
+p{margin:0 0 6px;color:#8f96a3}
+.l{margin-top:22px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.l a{padding:8px 14px;border-radius:7px;background:#232730;color:#c9ced8;text-decoration:none;font-size:13.5px}
+@media (prefers-color-scheme:light){.l a{background:#eceae5;color:#3d4148}}
+.l a:hover{background:#2f343e}
+</style></head><body><div class="b">
+<h1>${status}</h1>
+<p>${title}</p>
+<p style="font-size:13px;opacity:.7">${detail}</p>
+<div class="l"><a href="/">简体</a><a href="/zh-TW/">繁體</a><a href="/en/">English</a></div>
+</div></body></html>`;
+  return new Response(body, {
+    status,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'public, max-age=60',   // 别让错误页被长时间缓存
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+    },
+  });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
+      const r = errorPage(405, '方法不被允许 · Method not allowed', 'GET / HEAD only.');
+      r.headers.set('Allow', 'GET, HEAD');
+      return r;
     }
     const url = new URL(request.url);
     let path = url.pathname;
@@ -31,7 +70,8 @@ export default {
     // 只允许取站点自身产出的文件，不给遍历到桶里别的前缀
     // 允许一层语言子目录（/en/2026-09-16.html）。只放行单层，不给目录遍历留口子。
     if (!/^\/(?:[A-Za-z]{2}(?:-[A-Za-z]{2,4})?\/)?[A-Za-z0-9._-]+\.(html|xml|json)$/.test(path)) {
-      return new Response('Not Found', { status: 404 });
+      return errorPage(404, '页面不存在 · Page not found',
+                       '这个地址不在本站的产出范围内。 This path is not served by this site.');
     }
 
     const name = path.slice(1);
@@ -44,8 +84,11 @@ export default {
     });
 
     if (!res.ok) {
-      return new Response(res.status === 404 ? 'Not Found' : 'Upstream Error',
-                          { status: res.status === 404 ? 404 : 502 });
+      return res.status === 404
+        ? errorPage(404, '页面不存在 · Page not found',
+                    '这一天可能已超出保留期。 This day may be outside the retention window.')
+        : errorPage(502, '上游暂时不可用 · Upstream unavailable',
+                    '对象存储没有正常响应，稍后再试。 Object storage did not respond; please retry.');
     }
 
     const h = new Headers(res.headers);

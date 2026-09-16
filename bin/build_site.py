@@ -117,6 +117,7 @@ h1.site{margin:0;font-size:16px;font-weight:600;color:var(--fgh);letter-spacing:
   text-decoration:none;font-family:inherit;cursor:pointer;transition:background .15s}
 .nav a:hover,.nav button.tg:hover{background:var(--bg4);color:var(--fgh2);text-decoration:none}
 .nav span.dis{opacity:.4}
+.nav a em{font-style:normal}
 .nav select{background:var(--bg3);color:var(--fg2);border:1px solid transparent;border-radius:7px;
   padding:6px 10px;font-size:13px;font-family:inherit;min-width:0;max-width:100%}
 .nav a.all{color:var(--link)}
@@ -204,6 +205,7 @@ em{color:var(--fg2);font-style:normal}
 .st.pend{opacity:.55}
 /* 语言切换：跟日期导航同一行，低调但点得到。当前语言不是链接，避免自己链自己 */
 .lang{display:inline-flex;gap:2px;align-items:center;margin-left:4px}
+.lang i{display:none;font-style:normal}          /* 缩写，窄屏才出来 */
 .lang a,.lang span{padding:4px 7px;border-radius:5px;font-size:12.5px;line-height:1;
   color:var(--fg3);white-space:nowrap}
 .lang a:hover{background:var(--bg3);color:var(--fg)}
@@ -222,12 +224,21 @@ footer.dis a{color:var(--fg2);border-bottom:1px solid var(--bd2)}
   .bar{gap:9px;margin-bottom:9px}
   h1.site{font-size:14.5px;width:100%}
   h1.site span{display:block;margin:2px 0 0;font-size:11px}
-  .nav{margin-left:0;width:100%;gap:6px}
+  .nav{margin-left:0;width:100%;gap:6px;flex-wrap:wrap;row-gap:7px}
+  /* 语言块按自然宽度、不参与等分，否则它会把日期下拉挤没（实测挤到 14px）。
+     窄屏换成缩写：简/繁/EN 约 66px，完整标签要 142px。 */
+  .lang{margin-left:0;flex:0 0 auto;order:9}
+  .lang b{display:none}
+  .lang i{display:inline}
   .nav a,.nav span.dis,.nav select,.nav button.tg{flex:1;text-align:center;padding:9px 6px;
     font-size:13px;min-height:38px;white-space:nowrap;display:flex;align-items:center;
     justify-content:center}
-  .nav select{flex:1.4 1 0;min-width:0}
+  /* min-width 不能给 0：flex 会把它一路压到看不见。88px 刚好放下 09-16 加箭头 */
+  .nav select{flex:1.4 1 88px;min-width:88px}
   .nav a.all,.nav button.tg{flex:0 0 auto;padding:9px 12px}
+  /* 「全部 N 天」在窄屏是冗余的：日期下拉最后一项就是去归档。
+     省下它约 56px，导航才挤得进一行——两行会让 header 从 133 涨到 178px。 */
+  .nav a.all{display:none}
   .tabs{gap:4px}
   .tab{flex:1 1 auto;padding:9px 8px;font-size:13.5px;min-height:38px}
   .tab em{display:none}
@@ -248,8 +259,11 @@ footer.dis a{color:var(--fg2);border-bottom:1px solid var(--bd2)}
 }
 @media (max-width:380px){
   .tab{flex:1 1 calc(50% - 2px);font-size:13px;padding:9px 5px}
-  .nav a,.nav span.dis{padding:9px 4px;font-size:12px}
-  .lang{margin-left:0}
+  .nav a,.nav span.dis{padding:9px 3px;font-size:12px}
+  /* 320px 上只留箭头：省下两侧各约 30px，导航才不用换行（换行会让 header 从
+     133 涨到 178px）。相邻日期在下拉里看得到，不算信息丢失。 */
+  .nav a em{display:none}
+  .nav select{flex:1.6 1 76px;min-width:76px}
   .lang a,.lang span{padding:5px 5px;font-size:11.5px}
   .nav a.all,.nav button.tg{padding:9px 9px}
   table{font-size:12px}
@@ -507,18 +521,22 @@ def lang_switch(page):
         # 目标语言的相对前缀：当前在子目录就先退一层
         up = '' if LANG == 'zh-CN' else '../'
         href = up + ('' if code == 'zh-CN' else code + '/')
-        items.append('<span class="on">%s</span>' % i18n.LANG_LABEL[code] if here
-                     else '<a href="%s%s">%s</a>' % (href, page, i18n.LANG_LABEL[code]))
+        # 完整标签与缩写都输出，由 CSS 按屏宽切换——同一份 HTML 两种宽度都对
+        txt = ('<b>%s</b><i>%s</i>' % (i18n.LANG_LABEL[code], i18n.LANG_ABBR[code]))
+        items.append('<span class="on">%s</span>' % txt if here
+                     else '<a href="%s%s">%s</a>' % (href, page, txt))
     return '<span class="lang" title="%s">%s</span>' % (H.escape(T('nav.lang')), ''.join(items))
 
 
 def nav_html(day):
     i = index_of[day]
-    prev = ('<a id="prevday" href="%s.html">‹ %s</a>' % (days[i-1], days[i-1][5:])) if i > 0 \
+    # 日期包一层 <em>，最窄的屏上只留箭头——标题里已经有当天日期，这里重复的
+    # 是相邻日期，省掉它 320px 才挤得进一行
+    prev = ('<a id="prevday" href="%s.html">‹<em>&nbsp;%s</em></a>' % (days[i-1], days[i-1][5:])) if i > 0 \
            else '<span class="dis" title="%s">%s</span>' % (
                H.escape(WINDOW_NOTE or T('nav.oldest_tip')),
                T('nav.window_end', len(days)) if WINDOWED else T('nav.oldest_end'))
-    nxt = ('<a id="nextday" href="%s.html">%s ›</a>' % (days[i+1], days[i+1][5:])) if i < len(days)-1 \
+    nxt = ('<a id="nextday" href="%s.html"><em>%s&nbsp;</em>›</a>' % (days[i+1], days[i+1][5:])) if i < len(days)-1 \
           else '<span class="dis">%s</span>' % T('nav.newest_end')
     # 当前日期已经在标题里了，下拉只作跳转用，默认不落在任何一天上——
     # 预选某天会让人以为「我选了这天」，而不是「这是最新的一天」。
