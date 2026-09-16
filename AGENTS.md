@@ -54,7 +54,9 @@
 
 ## Atom feed
 
-`site/feed.xml` 由 `build_site.py` 生成，一篇报告一条、全文、保留最近 20 条。
+`site/feed.xml` 由 `build_site.py` 生成，一篇报告一条、全文。
+
+**条数由窗口推导，不要写回固定值。** `FEED_MAX = PUBLIC_DAYS × len(PANELS)`。以前写死 20，而满负荷时 7 天 × 4 篇 = 28 条——feed 会悄悄收窄到 5 天，站点还是 7 天。这不是谁决定的，是两个互不相干的常数撞出来的，而且不报错、只有逐条数日期才看得出来。`tests/test_site_window.py` 里有一条用例钉住「站点上有的日子 feed 里也得有」。不限窗时仍用 20：那种情况 `days` 可能攒到上百天，全放进去 feed 会几十 MB。
 
 正文用 **CDATA** 而不是 XML 转义——转义会把每个 `<` 变成 `&lt;`，体积近乎翻倍（实测 387 KB → 298 KB）。CDATA 内部只有 `]]>` 需要处理，代码里已拆成两段。
 

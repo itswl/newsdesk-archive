@@ -389,7 +389,13 @@ def _conf(key, default=''):
 
 CONTACT  = _conf('CONTACT')     # 留空则只显示声明、不显示联系方式
 SITE_URL = _conf('SITE_URL').rstrip('/')   # 对外地址；留空则不生成 feed（feed 里的链接必须是绝对地址）
-FEED_MAX = 20                   # feed 里保留多少篇。单篇渲染后平均 17KB，20 篇约 340KB
+# feed 的覆盖范围必须跟站点一致，否则「对外只保留 N 天」这句话在 feed 上不成立。
+# 以前是写死 20：满负荷时 7 天 × 4 篇 = 28 条 > 20，feed 会悄悄收窄到 5 天，
+# 而站点还是 7 天——两个互不相干的常数撞出来的结果，不是谁决定的。
+#
+# 限窗时按「窗口天数 × 每天篇数」算，范围由 PUBLIC_DAYS 一个旋钮决定。
+# 不限窗时保留原来的 20：那种情况下 days 可能攒到上百天，全放进去 feed 会几十 MB。
+FEED_MAX = _args.days * len(PANELS) if _args.days > 0 else 20
 # 声明同时出现在每日页、归档页和 Atom feed 的页脚。
 # 站点分发的内容里含第三方文本（豆瓣简介、GitHub 仓库描述、各平台热榜标题），
 # 这不只是隐私问题，也是版权与各平台 ToS 的问题：自己看是一回事，
@@ -608,8 +614,11 @@ if SITE_URL:
                   '</entry>']
     parts.append('</feed>')
     open(os.path.join(SITE, 'feed.xml'), 'w', encoding='utf-8').write('\n'.join(parts))
-    print('  %s/feed.xml  (%d 条，%.0f KB)' % (os.path.relpath(SITE, ROOT),
-             len(items), os.path.getsize(os.path.join(SITE, 'feed.xml')) / 1024))
+    covered = len({e[0] for e in items})
+    print('  %s/feed.xml  (%d 条 · 覆盖 %d 天 / 站点 %d 天%s，%.0f KB)'
+          % (os.path.relpath(SITE, ROOT), len(items), covered, len(days),
+             '' if covered == len(days) else ' ← 被 FEED_MAX 截短了',
+             os.path.getsize(os.path.join(SITE, 'feed.xml')) / 1024))
 else:
     print('  未配 SITE_URL，跳过 feed')
 

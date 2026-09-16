@@ -7,12 +7,16 @@ backup_oci.sh 的 prune_public，靠「只认 YYYY-MM-DD.html」+「本地为空
 
 跑真的 build_site 子进程：它一导入就扫目录写站点，没法 import。
 """
-import os, re, shutil, subprocess, tempfile, unittest
+import glob, os, re, shutil, subprocess, tempfile, unittest
 from _base import bindir
 ROOT = bindir()
 PY = os.path.join(ROOT, '.venv', 'bin', 'python')
 REPORTS = os.path.join(ROOT, 'reports')
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}\.html$')
+PANELS = [('ai', 'AI', ['ai-news.md']),
+          ('trending', 'Trending', ['github-trending.md', 'github-trending_draft*.md']),
+          ('momoyu', '摸摸鱼', ['momoyu.md']),
+          ('douban', '豆瓣', ['douban.md'])]
 
 
 def all_days():
@@ -100,6 +104,26 @@ class TestWindow(unittest.TestCase):
         before = set(all_days())
         self.build('--days', '1')
         self.assertEqual(before, set(all_days()))
+
+    def test_feed_covers_every_published_day(self):
+        """feed 的范围必须和站点一致。
+
+        以前 FEED_MAX 写死 20，而满负荷时 7 天 × 4 篇 = 28 条——feed 会悄悄
+        收窄到 5 天，站点还是 7 天。两个互不相干的常数撞出来的，谁都没决定过，
+        而且不会报错，只有逐条数日期才看得出来。
+        """
+        out = self.build('--days', '5')
+        feed = os.path.join(out, 'feed.xml')
+        if not os.path.exists(feed):
+            self.skipTest('未配置 SITE_URL，不生成 feed')
+        page_days = {p[:-5] for p in self.pages(out)}
+        feed_days = set(re.findall(r'/(\d{4}-\d{2}-\d{2})\.html', open(feed, encoding='utf-8').read()))
+        # 当天目录里一篇报告都没有的日子，页面在但 feed 里没条目，属正常
+        has_report = {d for d in page_days
+                      if any(glob.glob(os.path.join(REPORTS, d, pat))
+                             for _k, _l, pats in PANELS for pat in pats)}
+        self.assertEqual(feed_days, has_report,
+                         'feed 与站点覆盖的日期不一致：feed 缺 %s' % (has_report - feed_days))
 
     def test_local_full_build_is_unaffected(self):
         # 限窗只针对发布；本地与私有桶备份始终全量
