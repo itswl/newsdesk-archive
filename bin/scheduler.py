@@ -57,6 +57,9 @@ def _conf(key, default):
     return default
 
 ENGINE = _conf('ENGINE', 'claude')   # 默认分析引擎，改 bin/config.conf
+# 主引擎配额耗尽时改用它。两个引擎走的是不同供应商，配额池互不相干，
+# 所以这是「今天还能不能出报告」和「今天这份没了」的差别。留空则不兜底。
+FALLBACK_ENGINE = _conf('ENGINE_FALLBACK', '')
 TASK_TIMEOUT_MIN = 30  # 单任务上限。超时必须有：调度器是单线程串行的，
                        # 一个卡住的模型调用会让后面所有任务再也不触发，
                        # 而且是静默死掉——日志停在「分析中」就没下文。
@@ -76,6 +79,28 @@ QUOTA_PATTERNS = re.compile(
     re.I)
 
 _stop = False
+
+
+def next_action(ok, tail, attempts, fallback_available):
+    """一次执行结束后该怎么办。
+
+    抽成纯函数是为了能测：tick() 里要起子进程、读写状态，测不动，而这里的判断
+    恰好是「错了也不报错、只是白烧配额」的那类。
+
+    返回 'ok' | 'fallback' | 'give_up_quota' | 'retry' | 'give_up'
+
+    ⚠️ 配额错误不能按普通失败重试。用量窗口是 USAGE_WINDOW_HOURS 小时，
+    RETRY_GAP_MIN 分钟之后窗口根本没重置，重试必然再失败——白白多烧两次调用、
+    还把告警推迟了 20 分钟。有备用引擎就立刻换（不同供应商、不同配额池），
+    没有就直接判定今天这一档没了。
+    """
+    if ok:
+        return 'ok'
+    if QUOTA_PATTERNS.search(tail or ''):
+        return 'fallback' if fallback_available else 'give_up_quota'
+    if attempts > RETRIES:
+        return 'give_up'
+    return 'retry'
 
 
 def schedule_gaps():
@@ -201,24 +226,56 @@ def tick(state):
             # 余量太小时值得知道
             left = (deadline + datetime.timedelta(minutes=CATCHUP_MARGIN_MIN) - now).total_seconds() / 3600
             log('↻ %s 补跑（错过 %.1fh，距下一档 %.1fh）' % (task, late_h, left))
-        ok, tail = run_task(task)
+        used = ENGINE
+        ok, tail = run_task(task, used)
         attempts += 1
-        if ok:
-            state[task] = {'date': today, 'status': 'ok', 'attempts': attempts,
+        fallback_ok = bool(FALLBACK_ENGINE) and FALLBACK_ENGINE != ENGINE
+        act = next_action(ok, tail, attempts, fallback_ok)
+
+        if act == 'fallback':
+            log('⚠ %s 命中配额限制（%s）——换备用引擎 %s 重跑。'
+                '不做 %d 分钟后重试：用量窗口 %.1f 小时，那时窗口还没重置。'
+                % (task, used, FALLBACK_ENGINE, RETRY_GAP_MIN, USAGE_WINDOW_HOURS))
+            used = FALLBACK_ENGINE
+            ok, tail = run_task(task, used)
+            attempts += 1
+            # 备用引擎也倒了就别再折腾了，两边都没额度不是等一会儿能解决的
+            act = 'ok' if ok else ('give_up_quota' if QUOTA_PATTERNS.search(tail or '')
+                                   else ('give_up' if attempts > RETRIES else 'retry'))
+
+        if act == 'ok':
+            if used != ENGINE:
+                log('✔ %s 由备用引擎 %s 完成' % (task, used))
+                # 这条值得推送：报告是出来了，但它说明主引擎今天的额度见底了。
+                # 只在真的切换时才发，平时一声不响。
+                notify('ℹ️ newsdesk %s 改用了备用引擎' % task,
+                       '主引擎 %s 报配额限制，已由 %s 完成，报告照常产出。\n'
+                       '口径可能与平时略有差异。\n'
+                       '如果这条频繁出现，说明主引擎额度长期不够，'
+                       '考虑把 config.conf 的 ENGINE 直接换成 %s。'
+                       % (ENGINE, used, used))
+            state[task] = {'date': today, 'status': 'ok', 'attempts': attempts, 'engine': used,
                            'finished': datetime.datetime.now().isoformat(timespec='seconds')}
-        elif attempts > RETRIES:
-            log('✘ %s 已重试 %d 次仍失败，今日放弃' % (task, RETRIES))
-            quota = bool(QUOTA_PATTERNS.search(tail))
-            if quota:
-                # 单独标出来：这不是普通失败，是上面那套窗口假设失效的信号
-                log('⚠ 失败信息命中配额特征——检查 USAGE_WINDOW_HOURS 与时间表是否仍然成立')
-            notify('%s newsdesk %s 失败' % ('⚠️配额' if quota else '❌', task),
-                   '重试 %d 次仍失败。\n%s\n%s' % (
-                       RETRIES,
-                       '命中配额特征，时间表的用量窗口假设可能已失效。' if quota else '',
-                       tail[-300:]))
+        elif act == 'give_up_quota':
+            log('✘ %s 配额耗尽，今日这一档放弃（重试帮不上忙，窗口 %.1f 小时才重置）'
+                % (task, USAGE_WINDOW_HOURS))
+            notify('⚠️ newsdesk %s 配额耗尽' % task,
+                   '引擎 %s 报配额限制，%s。\n'
+                   '已跳过今天这一档——用量窗口 %.1f 小时，重试等不到重置。\n'
+                   '下一档会在新窗口里正常触发。\n\n'
+                   '想减少这种情况：config.conf 里设 ENGINE_FALLBACK（用另一个供应商兜底），'
+                   '或把 ENGINE 换成额度更宽的那个。\n\n%s'
+                   % (used,
+                      '备用引擎 %s 也报了配额' % FALLBACK_ENGINE if fallback_ok else '未配置备用引擎',
+                      USAGE_WINDOW_HOURS, (tail or '')[-300:]))
             state[task] = {'date': today, 'status': 'failed', 'attempts': attempts,
-                           'quota': quota, 'last_attempt_ts': time.time()}
+                           'quota': True, 'engine': used, 'last_attempt_ts': time.time()}
+        elif act == 'give_up':
+            log('✘ %s 已重试 %d 次仍失败，今日放弃' % (task, RETRIES))
+            notify('❌ newsdesk %s 失败' % task,
+                   '重试 %d 次仍失败（引擎 %s）。\n%s' % (RETRIES, used, (tail or '')[-300:]))
+            state[task] = {'date': today, 'status': 'failed', 'attempts': attempts,
+                           'quota': False, 'engine': used, 'last_attempt_ts': time.time()}
         else:
             log('… %s 第 %d 次失败，%d 分钟后重试' % (task, attempts, RETRY_GAP_MIN))
             state[task] = {'date': today, 'status': 'retrying', 'attempts': attempts,
@@ -329,6 +386,9 @@ def main():
             print('调度器 pid=%s %s' % (pid, '运行中' if alive else '（已死，pid 文件过期）'))
         else:
             print('调度器未运行')
+        print('引擎: %s%s' % (ENGINE,
+              '  备用 %s' % FALLBACK_ENGINE if FALLBACK_ENGINE and FALLBACK_ENGINE != ENGINE
+              else '  无备用（配额耗尽即跳过当档）'))
         print('告警: %s' % ('已配置 ALERT_WEBHOOK'
                            if alert._conf('ALERT_WEBHOOK')
                            else '未配置——任务失败或整条停摆不会有任何通知'))
@@ -378,8 +438,10 @@ def main():
         os.getpid(), ENGINE, ' · '.join('%s→%s' % (t, k) for t, k in SCHEDULE)))
     log('补跑截止=下一档前 %d 分钟 · 重试 %d 次/间隔 %d 分钟 · 轮询 %ds' % (
         CATCHUP_MARGIN_MIN, RETRIES, RETRY_GAP_MIN, TICK))
-    log('用量窗口 %.1fh，最小间隔 %.2fh · 告警 %s' % (
+    log('用量窗口 %.1fh，最小间隔 %.2fh · 备用引擎 %s · 告警 %s' % (
         USAGE_WINDOW_HOURS, min(schedule_gaps()),
+        FALLBACK_ENGINE if FALLBACK_ENGINE and FALLBACK_ENGINE != ENGINE
+        else '无（配额耗尽即跳过当档）',
         '已配置' if alert._conf('ALERT_WEBHOOK') else '未配置（失败不会有人知道）'))
     consecutive_errors = 0
     try:
