@@ -1,34 +1,38 @@
-# 仓库只放代码：bin/ · prompts/ · README.md
-# 以下全部本地保留，不进版本控制
+# 仓库只放代码：bin/ · prompts/ · deploy/ · tests/ · README.md
+# 以下全部本地保留，不进版本控制。
+#
+# ⚠️ 前面的 / 不能省。不带斜杠的 `site/` 会匹配**任意层级**下同名的目录——
+# 现在恰好没有 bin/site/ 这种路径所以没出事，但这是个会自己引爆的雷：
+# 哪天新建一个叫 data/ 或 site/ 的子包，它会整个被忽略掉，而 git status
+# 干干净净、本地构建照常通过，只有真的 clone 一份才发现代码没进去。
+# （移植到 Go 版时就是这么踩的：internal/site/ 整个包从第一次提交起就没进过
+# 版本控制。）
 
 # 采集数据与报告产物
-data/
-reports/
-site/
+/data/
+/reports/
+/site/
 # 对外发布的限窗副本（只含最近 PUBLIC_DAYS 天），由 build_site --out 生成
-site-public/
-attic/
+/site-public/
+/attic/
 
-# 运行时
-logs/
-state/
+# 运行时。沙箱配置与渲染后的权限文件也在这里，它们按本机路径生成，
+# 换机器必须重新渲染，带过去反而是错的。
+/logs/
+/state/
 
 # Python
-.venv/
+/.venv/
 __pycache__/
 
 # macOS
 .DS_Store
 
-# 运行时生成的沙箱配置与渲染后的权限文件
-state/sandbox.sb
-state/agent-settings.json
-
 # 环境特有配置：提交的是 *.example.* 模板，真实值留本地
-bin/config.conf
-deploy/wrangler.toml
-bin/sandbox-paths.local.sh
+/bin/config.conf
+/bin/sandbox-paths.local.sh
+/deploy/wrangler.toml
 # wrangler 本地产物：.dev.vars 放本地测试用的 webhook 等凭据，
 # .wrangler/ 是它自己的缓存。两者都不该进版本控制。
-deploy/.dev.vars
-deploy/.wrangler/
+/deploy/.dev.vars
+/deploy/.wrangler/
